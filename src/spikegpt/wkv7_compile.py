@@ -27,9 +27,12 @@ from torch import nn
 def dplr_chunkwise(q, k, v, alpha, beta, gk, chunk_size: int = 32):
     """Chunked DPLR delta rule: S_t = S_{t-1}(diag(exp(gk)) + alpha beta^T) + v k^T.
 
-    q,k,v,alpha,beta,gk: [B, H, L, D]. Pure aten (matmul/cumsum/exp/masked_fill),
-    static loops over chunk_size and L/chunk_size -> torch.compile unrolls + fuses.
-    Inlined from flash-linear-attention (dplr/naive.py, MIT), einops -> reshape.
+    q,k,v,alpha,beta,gk: [B, H, L, D]. Pure aten (matmul/cumsum/exp), fully
+    vectorized intra-chunk attention (factored decay form, no Python loop over
+    positions) -> compiles fullgraph and fuses. Runs fp32: the factored decay
+    weights exp(-G) span up to ~2.7e8, so bf16 is unsafe for the attention build
+    (and that build is the compute/memory bottleneck, so bf16 wouldn't help even
+    if it were safe). Derived from flash-linear-attention's dplr/naive.py (MIT).
     """
     b, h, length, d_k = q.shape
     d_v = v.shape[-1]
@@ -45,24 +48,23 @@ def dplr_chunkwise(q, k, v, alpha, beta, gk, chunk_size: int = 32):
     q, k, v, alpha, beta, gk = map(chunkify, (q, k, v, alpha, beta, gk))
     gk_cumsum = gk.cumsum(-2)
 
-    A_ab = q.new_zeros(b, h, n, c, c)
-    A_qk = q.new_zeros(b, h, n, c, c)
-    A_ak = q.new_zeros(b, h, n, c, c)
-    A_qb = q.new_zeros(b, h, n, c, c)
-    arange = torch.arange(c, device=q.device)
-    for i in range(c):
-        alpha_i = alpha[:, :, :, i, None]
-        q_i = q[:, :, :, i, None]
-        gk_i = gk_cumsum[:, :, :, i, None]
-        mask = (arange <= i).view(1, c)
-        attn_i = (gk_i - gk_cumsum).masked_fill(~mask.unsqueeze(-1), float("-inf")).exp()
-        A_qk[:, :, :, i, :] = (q_i * k * attn_i).sum(-1).clone()
-        A_qb[:, :, :, i, :] = (q_i * beta * attn_i).sum(-1).clone()
-        mask = (arange < i).view(1, c)
-        attn_i = gk_i - gk[:, :, :, i, None] - gk_cumsum
-        attn_i = attn_i.masked_fill(~mask.unsqueeze(-1), float("-inf")).exp()
-        A_ab[:, :, :, i, :] = (alpha_i * beta * attn_i).sum(-1).clone()
-        A_ak[:, :, :, i, :] = (alpha_i * k * attn_i).sum(-1).clone()
+    # Vectorized intra-chunk attention via the factored decay form (no Python loop,
+    # no [c,c,d] blowup): A[i,j] = sum_d x_i y_j exp(G_i - G_j) = (x e^{G}) (y e^{-G})^T.
+    # exp(-G) is bounded (RWKV-7 decay w in (-0.6065, 0), so over chunk_size=32 the
+    # cumsum G in (-19.4, 0) and e^{-G} < 2.7e8) -> exact and fp32-safe. j>i entries
+    # are finite then masked to 0. ab/ak use the self-excluded cumsum (G - gk).
+    eG = gk_cumsum.exp()
+    eGi = (-gk_cumsum).exp()
+    qe = q * eG
+    ke = k * eGi
+    be = beta * eGi
+    ae = alpha * (gk_cumsum - gk).exp()
+    tril0 = torch.tril(torch.ones(c, c, dtype=torch.bool, device=q.device), 0)  # j<=i
+    tril1 = torch.tril(torch.ones(c, c, dtype=torch.bool, device=q.device), -1)  # j<i
+    A_qk = (qe @ ke.transpose(-1, -2)) * tril0
+    A_qb = (qe @ be.transpose(-1, -2)) * tril0
+    A_ab = (ae @ be.transpose(-1, -2)) * tril1
+    A_ak = (ae @ ke.transpose(-1, -2)) * tril1
 
     for i in range(1, c):
         prefix = (A_ab[..., i, :, None].clone() * A_ab[..., :, :i].clone()).sum(-2)
@@ -125,15 +127,22 @@ class RWKV7TimeMixCompile(nn.Module):
         head_dim: int = 64,
         chunk_size: int = 32,
         shared: dict | None = None,
+        kernel: str = "pure",
     ) -> None:
         super().__init__()
         if n_embd % head_dim != 0:
             raise ValueError(f"n_embd {n_embd} must be divisible by head_dim {head_dim}")
+        if kernel not in ("pure", "fla"):
+            raise ValueError(f"kernel must be 'pure' or 'fla'; got {kernel}")
         self.n_head = n_embd // head_dim
         self.head_dim = head_dim
         self.chunk_size = chunk_size
         self.layer_id = layer_id
         self._shared = shared
+        # "pure": fully-fusing vectorized pure-torch DPLR (compiles fullgraph, but
+        # ~10ms/block). "fla": fla's fast triton kernel wrapped as an opaque custom
+        # op (~1.6ms recurrence, compiles fullgraph=False, projections still fuse).
+        self.kernel = kernel
 
         ratio = 1.0 - layer_id / max(1, n_layer)
         ramp = (torch.arange(n_embd, dtype=torch.float32) / n_embd).view(1, 1, -1)
@@ -184,12 +193,23 @@ class RWKV7TimeMixCompile(nn.Module):
         kk = F.normalize((k * self.k_k).view(b, t, h, d), dim=-1, p=2.0).reshape(b, t, c)
         k = k * (1 + (a - 1) * self.k_a)
 
-        def heads(z):
-            return z.view(b, t, h, d).transpose(1, 2)  # [B,H,T,D]
+        if self.kernel == "fla":
+            from spikegpt.wkv7_fla_op import rwkv7_chunk
 
-        r_h, k_h, v_h, a_h, w_h, kk_h = map(heads, (r, k, v, a, w, kk))
-        o = dplr_chunkwise(r_h, k_h, v_h, -kk_h, kk_h * a_h, w_h, chunk_size=self.chunk_size)
-        o = o.transpose(1, 2)  # [B,T,H,D]
+            def hd(z):
+                return z.view(b, t, h, d)  # [B,T,H,D] (fla layout)
+
+            r_, k_, v_, a_2, w_, kk_ = map(hd, (r, k, v, a, w, kk))
+            o = rwkv7_chunk(r_, w_, k_, v_, -kk_, kk_ * a_2)  # [B,T,H,D]
+        else:
+
+            def heads(z):
+                return z.view(b, t, h, d).transpose(1, 2)  # [B,H,T,D]
+
+            r_h, k_h, v_h, a_h, w_h, kk_h = map(heads, (r, k, v, a, w, kk))
+            o = dplr_chunkwise(
+                r_h, k_h, v_h, -kk_h, kk_h * a_h, w_h, chunk_size=self.chunk_size
+            ).transpose(1, 2)  # back to [B,T,H,D]
         o = self.ln_x(o)
 
         # gate/bonus correction: (o + (r·k·r_k) v) * g, per head

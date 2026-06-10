@@ -98,26 +98,39 @@ per-head norm, gate/bonus). Validated: **fullgraph `torch.compile` with no graph
 breaks, output matches eager to 6e-7, backward clean.** So RWKV-7 is now
 compile-friendly (the goal).
 
-**Honest caveats — compile-friendly is not the same as fast here:**
+Two compile-friendly kernels were built and validated:
 
-| variant (6L/384d, ctx-512, compiled) | ms/step |
-|---|---:|
-| v4 (fused sequential WKV) | 18.7 |
-| v7 (fla, graph-breaks) | 68.2 |
-| v7c (pure-torch, fullgraph, single block ×6) | ~45/block |
+**(1) Vectorized pure-torch DPLR** (`dplr_chunkwise`, default `kernel="pure"`).
+The naive reference's per-position `for i in range(chunk)` loop unrolls into huge
+kernels (45 ms/block compiled). Replacing it with the **factored decay form** —
+`A[i,j] = Σ_d x_i y_j e^{G_i−G_j} = (x e^{G})(y e^{−G})ᵀ`, masked causal — removes
+the loop. RWKV-7's decay is bounded (`w∈(−0.6065,0)` ⇒ over a 32-chunk `e^{−G}<2.7e8`,
+fp32-safe), so it is exact (matches the sequential ground truth to 3e-7).
+**Result: 45 → 10.5 ms/block, fullgraph, no breaks.** (bf16 is *not* viable: the
+factored attention needs fp32 dynamic range, and it is the compute/memory
+bottleneck, so bf16 wouldn't help even if it were safe.)
 
-- The pure-torch chunked DPLR compiles but is **~14x slower per block than v4**:
-  the `chunk_size`-length Python loops unroll into large kernels and everything
-  runs fp32. Inductor fuses it but can't beat fla's hand-tuned triton.
-- fp32 chunk intermediates are **memory-heavy** (OOM at 12L/512d batch-24).
-- The cross-layer value residual mutates a Python dict inside the compiled
-  region → per-step recompile; the compile-friendly variant runs self-contained
-  (compile-safe threading needs model-level surgery).
+**(2) fla's triton kernel as a custom op** (`wkv7_fla_op.py`, `kernel="fla"`).
+Wrapping `chunk_rwkv7` — *and its backward* (recompute) — as `torch.library`
+custom ops with `register_fake` makes both opaque to `torch.compile`: it now
+compiles **`fullgraph=True`** (no break, no fake-tensor-tracing error), grads
+finite, recurrence ~1.6 ms fwd+bwd.
 
-**Verdict:** RWKV-7 is now compile-friendly (fullgraph, no breaks). Realizing a
-throughput *win* still needs either fla's triton kernel wrapped as a proper
-custom op (fast + compile-compatible) or a vectorized/bf16 rewrite of the
-pure-torch chunked kernel — the pure-torch path is compile-friendly but slow.
+**Block-level timing (6L/384d, ctx-512, batch-32, compiled):**
+
+| kernel | ms/block | vs v4 |
+|---|---:|---:|
+| v4 (fused diagonal WKV) | ~3 | 1.0x |
+| v7c pure (fullgraph) | 10.6 | 0.28x |
+| v7c fla (fullgraph) | 10.8 | 0.28x |
+
+**Key finding:** both compile-friendly kernels land at ~10.7 ms/block regardless
+of the recurrence cost (1.6 vs ~8 ms) — the RWKV-7 block is **projection-bound**
+(r/k/v/o + four LoRA gates + the delta-rule machinery), intrinsically ~3.5x
+heavier than v4's diagonal WKV. So compile-friendliness is achieved for both
+paths, but it is **not** a wall-clock win over v4: RWKV-7 is simply a heavier
+block. (The pure and fla kernels differ ~18% numerically — fla uses `scale=1.0`,
+the reference applies `d_k^{-0.5}` — both valid RWKV-7 parameterizations.)
 
 ## Bottom line ("do we need more scale?")
 
