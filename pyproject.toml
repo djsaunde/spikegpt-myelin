@@ -37,6 +37,9 @@ tracking = ["wandb"]
 tokenization = ["tokenizers>=0.15", "huggingface-hub>=0.20", "datasets>=2.18"]
 app = ["streamlit>=1.40"]
 cloud = ["modal"]
+# Experimental: chunked tensor-core RWKV-6/7 kernels for the modernized time-mix
+# A/B (benchmarks/wkv_ab.py, src/spikegpt/wkv7.py). Not used by the faithful v4 path.
+fla = ["flash-linear-attention>=0.1"]
 
 [build-system]
 requires = ["uv_build>=0.11.7,<0.12.0"]
