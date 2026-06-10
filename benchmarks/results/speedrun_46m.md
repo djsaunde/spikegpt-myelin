@@ -37,3 +37,5 @@ compiled run to a real quality bar.
 
 **Rejected:** lr 3e-3 static (worse convergence: 1.4504), ctx-128 (too-short early
 context hurts), Muon and RWKV-7-swap (earlier experiments).
+| wsd+lr3e3@bpc | 1.45 | 371.8 | 1007.7s @ step 2750 | 1.4286 @ 3000 |
+| wsd-decay0.25@bpc | 1.45 | 376.1 | 1025.5s @ step 2750 | 1.4264 @ 3000 |

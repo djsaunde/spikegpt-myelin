@@ -111,6 +111,7 @@ def main() -> None:
     p.add_argument("--lr-final-ratio", type=float, default=0.02)
     p.add_argument("--warmup", type=int, default=150)
     p.add_argument("--schedule", choices=("cosine", "wsd"), default="cosine")
+    p.add_argument("--decay-frac", type=float, default=0.4)
     p.add_argument("--weight-decay", type=float, default=0.1)
     p.add_argument("--grad-clip", type=float, default=1.0)
     p.add_argument("--ctx-schedule", default=None)
@@ -135,8 +136,11 @@ def main() -> None:
         for i, block in enumerate(model.blocks):
             model.blocks[i] = torch.compile(block, fullgraph=True, dynamic=bool(schedule))
     opt = torch.optim.AdamW(
-        model.parameters(), lr=args.lr, betas=(0.9, 0.95),
-        weight_decay=args.weight_decay, fused=True,
+        model.parameters(),
+        lr=args.lr,
+        betas=(0.9, 0.95),
+        weight_decay=args.weight_decay,
+        fused=True,
     )
     amp = lambda: torch.autocast(device_type="cuda", dtype=torch.bfloat16)  # noqa: E731
 
@@ -154,7 +158,15 @@ def main() -> None:
     model.train()
     step_ms, curve, wall_steady = [], [], 0.0
     for step in range(args.steps):
-        lr = lr_at(step, args.steps, args.lr, args.lr_final_ratio, args.warmup, args.schedule)
+        lr = lr_at(
+            step,
+            args.steps,
+            args.lr,
+            args.lr_final_ratio,
+            args.warmup,
+            args.schedule,
+            args.decay_frac,
+        )
         for g in opt.param_groups:
             g["lr"] = lr
         ctx, batch = ctx_at(step, args.steps, schedule, args.ctx, args.batch)
