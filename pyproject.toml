@@ -1,0 +1,68 @@
+[project]
+name = "spikegpt-myelin"
+version = "0.1.0"
+description = "SpikeGPT (enwik8/WikiText) reproduction built on the myelin SNN library."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "myelin",
+    "numpy>=1.24.4",
+    "torch>=2.13.0.dev0",
+    "torchvision",
+]
+license = "MIT"
+
+# torch 2.13 (for the associative_scan WKV path with working autograd) ships only
+# as a nightly build, which is not on PyPI. Pull torch/torchvision/triton from the
+# PyTorch nightly CUDA index; myelin (the core dependency) shares the same pins.
+[tool.uv]
+prerelease = "allow"
+required-environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+
+[[tool.uv.index]]
+name = "pytorch-nightly"
+url = "https://download.pytorch.org/whl/nightly/cu130"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-nightly" }
+torchvision = { index = "pytorch-nightly" }
+triton = { index = "pytorch-nightly", marker = "sys_platform == 'linux'" }
+myelin = { git = "https://github.com/djsaunde/myelin.git" }
+
+[project.optional-dependencies]
+cuda = ["triton"]
+dev = ["pre-commit", "pyright", "pytest", "ruff"]
+tracking = ["wandb"]
+tokenization = ["tokenizers>=0.15", "huggingface-hub>=0.20", "datasets>=2.18"]
+app = ["streamlit>=1.40"]
+cloud = ["modal"]
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "spikegpt"
+module-root = "src"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-ra", "-m", "not extended"]
+markers = [
+    "extended: slower integration, benchmark, or GPU coverage outside the default gate",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pyright]
+include = ["src", "tests", "examples"]
+pythonVersion = "3.11"
+typeCheckingMode = "standard"
+reportMissingImports = "none"
+reportPrivateImportUsage = "none"

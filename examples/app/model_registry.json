@@ -1,0 +1,51 @@
+[
+  {
+    "name": "SpikeGPT 216M — WikiText-103 (beats paper)",
+    "path": "runs/spikegpt_216m_wt103_ft.best.pt",
+    "dataset": "WikiText-103 (BPE, GPT-NeoX)",
+    "metric": "test PPL 26.47 (token-level)",
+    "blurb": "The 216M headline: OpenWebText2-pretrained (10B tokens) then fine-tuned on WikiText-103. Token-level test perplexity 26.47 vs the paper's 39.75 — beats it by ~33%, with the matching GPT-NeoX tokenizer. Generates Wikipedia-style prose."
+  },
+  {
+    "name": "SpikeGPT 216M — OpenWebText2 (base LM)",
+    "path": "runs/spikegpt_216m_owt2_10b.final.pt",
+    "dataset": "OpenWebText2 (BPE, GPT-NeoX)",
+    "metric": "OWT2 held-out PPL ~27 (token-level)",
+    "blurb": "The general web-text base model before any WikiText fine-tune (final 610k-step checkpoint, 10B-token pretrain). Open-domain — best for free-form generation; not adapted to WikiText's format (its zero-shot WikiText PPL is ~94)."
+  },
+  {
+    "name": "SpikeGPT enwik8 — ctx-3072 (headline, beats paper)",
+    "path": "runs/spikegpt_enwik8_12L512d_ctx3072.final139k.pt",
+    "dataset": "enwik8 (byte-level)",
+    "metric": "test BPC 1.239 (strided, full-context)",
+    "blurb": "ctx-3072 / batch-24 / lr-8e-4, full 139k-step run. Beats the paper's headline ctx-3072 result (1.262). This is the FINAL (unselected) checkpoint, so the number carries no checkpoint-selection bias — and it beat the noisy-val 'best' (1.251)."
+  },
+  {
+    "name": "SpikeGPT enwik8 — ctx-1024 best (batch-64 fast)",
+    "path": "runs/spikegpt_enwik8_12L512d_fast.best.pt",
+    "dataset": "enwik8 (byte-level)",
+    "metric": "test BPC 1.235 (strided, full-context)",
+    "blurb": "Tuned batch-64 / lr-2e-3 run (~9h). Beats the paper's ctx-1024 1.283 by ~0.05 and the batch-12 run (1.281) — faster AND a better optimum."
+  },
+  {
+    "name": "SpikeGPT enwik8 — batch-12 repro",
+    "path": "runs/spikegpt_enwik8_12L512d_repro.best.pt",
+    "dataset": "enwik8 (byte-level)",
+    "metric": "test BPC 1.281 (strided, full-context)",
+    "blurb": "Full ~10B-token reproduction at the paper's global batch (12). Matches the paper's 1.283 (ctx-1024). Stabilized recipe (lr 4e-4, wd 0.1), bf16."
+  },
+  {
+    "name": "SpikeGPT enwik8 — v2 (120k)",
+    "path": "runs/spikegpt_enwik8_12L512d_v2.best.pt",
+    "dataset": "enwik8 (byte-level)",
+    "metric": "test BPC 1.338 (strided, full-context)",
+    "blurb": "Compressed 120k-step stabilized run. Reaches ~1.34 at 1/7 the paper budget."
+  },
+  {
+    "name": "SpikeGPT tinyshakespeare — base",
+    "path": "runs/spikegpt_shakespeare_base.pt",
+    "dataset": "tinyshakespeare",
+    "metric": "val BPC ~2.12",
+    "blurb": "Small 6L/256d model on tinyshakespeare. Coherent ROMEO/JULIET-style samples."
+  }
+]
