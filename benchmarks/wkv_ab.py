@@ -36,7 +36,10 @@ def build(cfg, variant: str, device, seed: int):
         if variant == "v7":
             from spikegpt.wkv7 import RWKV7TimeMix
 
-            make = RWKV7TimeMix
+            shared: dict = {}  # one per model: threads RWKV-7's value residual
+
+            def make(n_embd, n_layer, layer_id):
+                return RWKV7TimeMix(n_embd, n_layer, layer_id, head_dim=HEAD_DIM, shared=shared)
         else:
 
             def make(n_embd, n_layer, layer_id):

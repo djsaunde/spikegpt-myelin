@@ -72,6 +72,8 @@ class Muon(torch.optim.Optimizer):
         nesterov: bool = True,
         ns_steps: int = 5,
         weight_decay: float = 0.0,
+        momentum_warmup: int = 0,
+        momentum_start: float = 0.85,
     ) -> None:
         defaults = dict(
             lr=lr,
@@ -79,8 +81,11 @@ class Muon(torch.optim.Optimizer):
             nesterov=nesterov,
             ns_steps=ns_steps,
             weight_decay=weight_decay,
+            momentum_warmup=momentum_warmup,
+            momentum_start=momentum_start,
         )
         super().__init__(params, defaults)
+        self._step_count = 0
 
     @torch.no_grad()
     def step(self, closure=None):  # type: ignore[override]
@@ -88,8 +93,19 @@ class Muon(torch.optim.Optimizer):
         if closure is not None:
             with torch.enable_grad():
                 loss = closure()
+        self._step_count += 1
         for group in self.param_groups:
-            momentum = group["momentum"]
+            # Momentum warmup (modded-nanogpt): ramp momentum_start -> momentum over
+            # the first momentum_warmup steps; small early momentum lets the
+            # orthogonalized direction settle before heavy averaging.
+            warm = group["momentum_warmup"]
+            if warm > 0 and self._step_count <= warm:
+                frac = self._step_count / warm
+                momentum = group["momentum_start"] + frac * (
+                    group["momentum"] - group["momentum_start"]
+                )
+            else:
+                momentum = group["momentum"]
             for p in group["params"]:
                 grad = p.grad
                 if grad is None:

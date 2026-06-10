@@ -36,20 +36,31 @@ class RWKV7TimeMix(nn.Module):
         layer_id: int,
         *,
         head_dim: int = 64,
+        shared: dict | None = None,
     ) -> None:
         super().__init__()
         if n_embd % head_dim != 0:
             raise ValueError(f"n_embd {n_embd} must be divisible by head_dim {head_dim}")
-        # layer_idx=0 makes each block self-contained (computes its own value
-        # residual instead of consuming the first layer's); see module caveat.
+        self.layer_id = layer_id
+        # ``shared`` is one dict per model: block 0 writes the value residual
+        # ``v_first`` into it, later blocks read it. Blocks run sequentially in the
+        # forward pass, so this threads RWKV-7's value residual without touching the
+        # model's block loop. If shared is None each block is self-contained.
+        self._shared = shared
         self.attn = RWKV7Attention(
             mode="chunk",
             hidden_size=n_embd,
             head_dim=head_dim,
-            layer_idx=0,
+            layer_idx=layer_id,
             num_hidden_layers=n_layer,
         )
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        out = self.attn(inputs)
-        return out[0] if isinstance(out, tuple) else out
+        v_first = None
+        if self._shared is not None and self.layer_id != 0:
+            v_first = self._shared.get("v_first")
+        out = self.attn(inputs, v_first=v_first)
+        result, v_first_out = (out[0], out[-1]) if isinstance(out, tuple) else (out, None)
+        if self._shared is not None and self.layer_id == 0 and v_first_out is not None:
+            self._shared["v_first"] = v_first_out
+        return result

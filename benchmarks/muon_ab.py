@@ -133,7 +133,7 @@ def main() -> None:
     p.add_argument("--train-bytes", type=int, default=20_000_000)
     p.add_argument("--adam-lr", type=float, default=2e-3)
     p.add_argument("--weight-decay", type=float, default=0.1)
-    p.add_argument("--muon-lr", type=float, default=0.02)
+    p.add_argument("--muon-lr", type=float, default=2e-3)  # RMS-matched: ~ adam lr
     p.add_argument("--muon-adam-lr", type=float, default=2e-3)
     p.add_argument("--arms", default="adamw,muon")
     args = p.parse_args()
@@ -172,7 +172,12 @@ def main() -> None:
 
     def muon_fn(model):
         muon_p, rest_p = split_muon_params(model)
-        m = Muon(muon_p, lr=args.muon_lr, weight_decay=args.weight_decay)
+        m = Muon(
+            muon_p,
+            lr=args.muon_lr,
+            weight_decay=args.weight_decay,
+            momentum_warmup=max(1, int(0.1 * args.steps)),
+        )
         a = torch.optim.AdamW(
             rest_p,
             lr=args.muon_adam_lr,
@@ -199,6 +204,18 @@ def main() -> None:
         row = f"{s:5d}   " + "  ".join(f"{results[n][0][i][1]:10.4f}" for n in results)
         print(row, flush=True)
     print("\nmedian ms/step:", {n: round(results[n][1], 1) for n in results}, flush=True)
+
+    # steps-to-target: first step each arm reaches the best (lowest) final BPC of
+    # the "adamw" arm — the metric Muon's documented wins are measured on.
+    if "adamw" in results:
+        target = results["adamw"][0][-1][1]
+        print(f"\nsteps to reach adamw final BPC ({target:.4f}):", flush=True)
+        for n in results:
+            ms = results[n][1]
+            hit = next((s for s, b in results[n][0] if b <= target), None)
+            wall = f"{hit * ms / 1000:.1f}s" if hit else "n/a"
+            step_str = str(hit) if hit else "n/a"
+            print(f"  {n:9s} step {step_str:>6}  (~{wall} @ {ms:.0f}ms/step)", flush=True)
 
 
 if __name__ == "__main__":
