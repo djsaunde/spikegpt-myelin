@@ -32,7 +32,7 @@ from spikegpt.wkv5 import HEAD_DIM, MultiHeadRetentionTimeMix  # noqa: E402
 def build(cfg, variant: str, device, seed: int):
     torch.manual_seed(seed)
     model = SpikeLanguageModel(cfg)
-    if variant in ("v5", "v7"):
+    if variant in ("v5", "v7", "v7c"):
         if variant == "v7":
             from spikegpt.wkv7 import RWKV7TimeMix
 
@@ -40,6 +40,14 @@ def build(cfg, variant: str, device, seed: int):
 
             def make(n_embd, n_layer, layer_id):
                 return RWKV7TimeMix(n_embd, n_layer, layer_id, head_dim=HEAD_DIM, shared=shared)
+        elif variant == "v7c":
+            from spikegpt.wkv7_compile import RWKV7TimeMixCompile
+
+            # self-contained (shared=None): the cross-layer value-residual would
+            # mutate a Python dict inside the compiled region, forcing a recompile
+            # every step. Threading it compile-safely needs model-level surgery.
+            def make(n_embd, n_layer, layer_id):
+                return RWKV7TimeMixCompile(n_embd, n_layer, layer_id, head_dim=HEAD_DIM)
         else:
 
             def make(n_embd, n_layer, layer_id):

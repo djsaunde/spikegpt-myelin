@@ -62,22 +62,26 @@ def main() -> None:
         f"batch{args.batch} (compiled)",
         flush=True,
     )
+    torch._dynamo.config.cache_size_limit = 64
     out = {}
-    for variant in ("v4", "v7"):
+    # v4: fully compiles. v7 (fla): graph-breaks at the disabled triton kernel.
+    # v7c (pure-torch): fully fuses. fullgraph=False = "best each can compile".
+    for variant in ("v4", "v7", "v7c"):
         torch.compiler.reset()
         model = build(cfg, variant, device, seed=0)
-        # fullgraph=False so fla's custom RWKV-7 ops graph-break gracefully instead
-        # of erroring; v4 has no breaks so it still fully compiles.
         for i, block in enumerate(model.blocks):
             model.blocks[i] = torch.compile(block, fullgraph=False)
         opt = torch.optim.AdamW(model.parameters(), lr=2e-3, fused=True)
         ms = measure(model, opt, args.batch, args.context_length, args.vocab_size, device)
         out[variant] = ms
-        print(f"  {variant}  {ms:8.3f} ms/step", flush=True)
+        print(f"  {variant:4s} {ms:8.3f} ms/step", flush=True)
         del model, opt
         torch.cuda.empty_cache()
-    if "v4" in out and "v7" in out:
-        print(f"\nv7 end-to-end step speedup vs v4: {out['v4'] / out['v7']:.2f}x", flush=True)
+    base = out.get("v4")
+    if base:
+        print("\nstep speedup vs v4:", flush=True)
+        for v in out:
+            print(f"  {v:4s} {base / out[v]:.2f}x", flush=True)
 
 
 if __name__ == "__main__":

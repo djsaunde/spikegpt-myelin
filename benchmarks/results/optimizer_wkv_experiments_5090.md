@@ -78,6 +78,47 @@ speedup v4 gets, and (2) v7's extra LoRA decay/gate/delta projections add work.
 but it is not a wall-clock win as integrated — the throughput potential is
 unrealized pending a compile-friendly or custom-fused RWKV-7 kernel.
 
+## Making RWKV-7 compile-friendly (`src/spikegpt/wkv7_compile.py`)
+
+fla's RWKV-7 chunk kernel (`chunk_dplr_delta_rule`) is wrapped in
+`torch.compiler.disable`, so under `torch.compile` it is a hard graph break: the
+recurrence never fuses and the v7 step is ~3.6x slower than fully-compiled v4.
+`torch._dynamo.allow_in_graph` removes the disable break but then fails on
+fake-tensor tracing (the triton kernel has no meta impl) — making fla's kernel
+compile-compatible needs a full `torch.library` custom op (register_fake +
+register_autograd), a real kernel-integration project.
+
+**Existing-impl survey:** fla ships a *pure-PyTorch* DPLR reference
+(`generalized_delta_rule/dplr/naive.py::dplr_chunkwise`) — only aten ops, no
+`compiler.disable`. It compiles fullgraph.
+
+**Implemented:** `RWKV7TimeMixCompile` — RWKV-7 entirely in aten (token-shift,
+LoRA-gated projections, the DPLR chunked recurrence inlined from fla's reference,
+per-head norm, gate/bonus). Validated: **fullgraph `torch.compile` with no graph
+breaks, output matches eager to 6e-7, backward clean.** So RWKV-7 is now
+compile-friendly (the goal).
+
+**Honest caveats — compile-friendly is not the same as fast here:**
+
+| variant (6L/384d, ctx-512, compiled) | ms/step |
+|---|---:|
+| v4 (fused sequential WKV) | 18.7 |
+| v7 (fla, graph-breaks) | 68.2 |
+| v7c (pure-torch, fullgraph, single block ×6) | ~45/block |
+
+- The pure-torch chunked DPLR compiles but is **~14x slower per block than v4**:
+  the `chunk_size`-length Python loops unroll into large kernels and everything
+  runs fp32. Inductor fuses it but can't beat fla's hand-tuned triton.
+- fp32 chunk intermediates are **memory-heavy** (OOM at 12L/512d batch-24).
+- The cross-layer value residual mutates a Python dict inside the compiled
+  region → per-step recompile; the compile-friendly variant runs self-contained
+  (compile-safe threading needs model-level surgery).
+
+**Verdict:** RWKV-7 is now compile-friendly (fullgraph, no breaks). Realizing a
+throughput *win* still needs either fla's triton kernel wrapped as a proper
+custom op (fast + compile-compatible) or a vectorized/bf16 rewrite of the
+pure-torch chunked kernel — the pure-torch path is compile-friendly but slow.
+
 ## Bottom line ("do we need more scale?")
 
 Scale is not the blocker for either. Muon's gap is stable across a 3x scale jump
