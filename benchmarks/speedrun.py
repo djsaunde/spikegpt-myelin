@@ -63,9 +63,16 @@ def val_bpc(model, batches, amp):
     return tot / len(batches) / math.log(2.0)
 
 
-def cosine(step, total, lr, lr_final_ratio, warmup):
+def lr_at(step, total, lr, lr_final_ratio, warmup, schedule="cosine", decay_frac=0.4):
     if step < warmup:
         return lr * (step + 1) / warmup
+    if schedule == "wsd":
+        # warmup-stable-decay: constant lr, then cosine-decay the last decay_frac.
+        decay_start = total - int(decay_frac * total)
+        if step < decay_start:
+            return lr
+        t = (step - decay_start) / max(1, total - decay_start)
+        return lr * (lr_final_ratio + 0.5 * (1 - lr_final_ratio) * (1 + math.cos(math.pi * t)))
     t = (step - warmup) / max(1, total - warmup)
     return lr * (lr_final_ratio + 0.5 * (1 - lr_final_ratio) * (1 + math.cos(math.pi * t)))
 
@@ -103,6 +110,7 @@ def main() -> None:
     p.add_argument("--lr", type=float, default=2e-3)
     p.add_argument("--lr-final-ratio", type=float, default=0.02)
     p.add_argument("--warmup", type=int, default=150)
+    p.add_argument("--schedule", choices=("cosine", "wsd"), default="cosine")
     p.add_argument("--weight-decay", type=float, default=0.1)
     p.add_argument("--grad-clip", type=float, default=1.0)
     p.add_argument("--ctx-schedule", default=None)
@@ -146,7 +154,7 @@ def main() -> None:
     model.train()
     step_ms, curve, wall_steady = [], [], 0.0
     for step in range(args.steps):
-        lr = cosine(step, args.steps, args.lr, args.lr_final_ratio, args.warmup)
+        lr = lr_at(step, args.steps, args.lr, args.lr_final_ratio, args.warmup, args.schedule)
         for g in opt.param_groups:
             g["lr"] = lr
         ctx, batch = ctx_at(step, args.steps, schedule, args.ctx, args.batch)

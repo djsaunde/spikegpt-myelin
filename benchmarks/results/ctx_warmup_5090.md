@@ -56,6 +56,8 @@ full-context training for long-range quality. **Safe number: ~15% (throughput);
 
 **Shipped:** `examples/train_tiny_spikegpt.py --ctx-schedule "256:0.4,512:0.3,1024:0.3"`.
 
+> **Update (speedrun):** these numbers are **eager**. In the compiled production path, ctx-warmup needs `dynamic=True` shape-polymorphic compile, whose slower kernels negate the saving — and at a *meaningful* BPC target it shows no convergence advantage (same step-to-target as baseline). See `speedrun_46m.md`. The eager saving here is real but does not transfer to the compiled run to a real quality bar.
+
 ## Context: levers that did *not* beat the tuned v4+AdamW baseline (proxy)
 
 Same 6L/384d / 2000-step proxy, val BPC at fixed steps:
