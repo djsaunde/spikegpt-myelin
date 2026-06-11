@@ -112,6 +112,7 @@ def main() -> None:
     p.add_argument("--warmup", type=int, default=150)
     p.add_argument("--schedule", choices=("cosine", "wsd"), default="cosine")
     p.add_argument("--decay-frac", type=float, default=0.4)
+    p.add_argument("--logit-softcap", type=float, default=0.0, help="cap*tanh(logits/cap); 0=off")
     p.add_argument("--weight-decay", type=float, default=0.1)
     p.add_argument("--grad-clip", type=float, default=1.0)
     p.add_argument("--ctx-schedule", default=None)
@@ -175,7 +176,15 @@ def main() -> None:
         t0 = time.perf_counter()
         opt.zero_grad(set_to_none=True)
         with amp():
-            loss, _ = model(x, y)
+            if args.logit_softcap > 0:
+                logits = model(x)  # [B,T,V], no internal CE
+                cap = args.logit_softcap
+                logits = cap * torch.tanh(logits.float() / cap)
+                loss = torch.nn.functional.cross_entropy(
+                    logits.reshape(-1, logits.size(-1)), y.reshape(-1)
+                )
+            else:
+                loss, _ = model(x, y)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
         opt.step()

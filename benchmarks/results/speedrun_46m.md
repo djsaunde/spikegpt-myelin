@@ -39,3 +39,34 @@ compiled run to a real quality bar.
 context hurts), Muon and RWKV-7-swap (earlier experiments).
 | wsd+lr3e3@bpc | 1.45 | 371.8 | 1007.7s @ step 2750 | 1.4286 @ 3000 |
 | wsd-decay0.25@bpc | 1.45 | 376.1 | 1025.5s @ step 2750 | 1.4264 @ 3000 |
+| wsd-warmup50 | 1.45 | 322.6 | 878.3s @ step 2750 | 1.4288 @ 3000 |
+| wsd-wd0.05 | 1.45 | 344.9 | not reached (best 1.4560) | 1.4560 @ 3000 |
+| wsd-softcap15 | 1.45 | 404.4 | not reached (best 2.0161) | 2.0161 @ 3000 |
+| cosine@1.43 | 1.43 | 366.9 | 1158.8s @ step 3150 | 1.4192 @ 3500 |
+| wsd@1.43 | 1.43 | 183.2 | 571.9s @ step 3150 | 1.4093 @ 3500 |
+
+## Wall-clock-to-loss: tied, and unmeasurable here
+
+Clean adjacent runs to a **1.43** target (the metric that matters — seconds to a
+fixed loss):
+
+| config | step-to-1.43 | final BPC@3500 | steady ms/step |
+|---|---:|---:|---:|
+| cosine | 3150 | 1.4192 | 367 |
+| WSD    | 3150 | **1.4093** | 183 |
+
+- **Steps-to-1.43 are TIED (3150).** WSD and cosine converge at the same rate to a
+  given loss; WSD only pulls ahead on the *final* loss (its sharp end-decay: 1.4093
+  vs 1.4192).
+- The wall-clock gap (cosine 1159s vs WSD 572s) is **entirely step-time noise** —
+  367 vs 183 ms/step in *adjacent* runs. The GPU sits at P8 and does not reliably
+  boost to P0 under load (180 vs 3090 MHz), and clocks cannot be locked (no
+  permission). So **wall-clock-to-loss cannot be measured reliably in this
+  environment.**
+
+**Honest bottom line.** The only deterministic metric is loss-at-fixed-budget,
+on which WSD is a *marginal* win (~0.01–0.015 BPC) and ctx-warmup is not a win.
+On the wall-clock-to-fixed-loss objective the recipes are tied on steps, and the
+timing is too unstable to claim a winner. The tuned config is strong; a real
+wall-clock speedrun needs a clock-stable environment (lockable clocks / bare
+metal) before further iteration is meaningful.
