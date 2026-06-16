@@ -1,5 +1,7 @@
 # Optimizer & WKV-variant experiments (RTX 5090)
 
+> **Repo cleanup:** the harness/module code referenced below was experimental scaffolding and has been removed; the findings are retained here and the code is preserved in git history.
+
 Speedrun-style attempts to beat the tuned v4 + AdamW baseline. Proxy: 6L/384d,
 ctx-512, batch-32, eager (loss-vs-step is compile-invariant), AdamW lr 2e-3 /
 wd 0.1 / cosine, same init + seeded batch stream across arms. Harnesses:
@@ -137,5 +139,6 @@ the reference applies `d_k^{-0.5}` — both valid RWKV-7 parameterizations.)
 Scale is not the blocker for either. Muon's gap is stable across a 3x scale jump
 (architecture-fit issue, or needs 124M+ converged). RWKV-7 reaches quality parity
 regardless of scale; its blocker is kernel integration (fla + compile), not scale.
-The one lever that did improve wall-clock at matched quality remains context-length
-warmup (`ctx_warmup_5090.md`).
+Context-length warmup (`ctx_warmup_5090.md`) looked like a wall-clock win *eager*,
+but the speedrun (`speedrun_46m.md`) showed it does not survive compilation. Net:
+no lever cleanly beat the tuned v4+AdamW recipe on the compiled production path.

@@ -1,5 +1,7 @@
 # Context-length warmup: wall-clock reduction at matched quality (RTX 5090)
 
+> **Repo cleanup:** the harness/module code referenced below was experimental scaffolding and has been removed; the findings are retained here and the code is preserved in git history.
+
 **Lever:** train the early phase at a shorter context length, then grow to the
 full context. v4's WKV recurrence is *sequential over time*, so a step's
 wall-clock is latency-bound in the context length `T`. Holding tokens-per-step
@@ -54,7 +56,7 @@ full-context training for long-range quality. **Safe number: ~15% (throughput);
 - Zero architecture/quality risk (identical v4 model), no new dependencies, and
   composes with any other lever.
 
-**Shipped:** `examples/train_tiny_spikegpt.py --ctx-schedule "256:0.4,512:0.3,1024:0.3"`.
+**Status:** removed in cleanup — not a validated compiled-path win (see the speedrun update below / `speedrun_46m.md`).
 
 > **Update (speedrun):** these numbers are **eager**. In the compiled production path, ctx-warmup needs `dynamic=True` shape-polymorphic compile, whose slower kernels negate the saving — and at a *meaningful* BPC target it shows no convergence advantage (same step-to-target as baseline). See `speedrun_46m.md`. The eager saving here is real but does not transfer to the compiled run to a real quality bar.
 

@@ -1,5 +1,7 @@
 # Speedrun leaderboard — 46M (12L/512d) enwik8, wall-clock to target val BPC
 
+> **Repo cleanup:** the harness/module code referenced below was experimental scaffolding and has been removed; the findings are retained here and the code is preserved in git history.
+
 Steady-state ms/step excludes the compile/warmup ramp. wall-to-target is steady-state seconds to reach the target BPC (proxy for the full run).
 
 | label | target | steady ms/step | wall-to-target | final BPC @ steps |

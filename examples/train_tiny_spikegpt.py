@@ -71,14 +71,11 @@ def compile_spikegpt_regions(
     fullgraph: bool,
     options: dict[str, object] | None = None,
     mode: str | None = None,
-    dynamic: bool | None = None,
 ) -> SpikeLanguageModel:
     """Compile repeated SpikeGPT blocks while keeping the top-level loop eager.
 
     ``mode`` (e.g. ``max-autotune-no-cudagraphs``) and ``options`` are mutually
-    exclusive in ``torch.compile``; pass at most one. ``dynamic=True`` compiles a
-    single shape-polymorphic graph (needed when ``--ctx-schedule`` varies the
-    context length, so changing T does not force a fullgraph recompile).
+    exclusive in ``torch.compile``; pass at most one.
     """
 
     for index, block in enumerate(model.blocks):
@@ -87,7 +84,6 @@ def compile_spikegpt_regions(
             fullgraph=fullgraph,
             options=options,  # type: ignore[arg-type]
             mode=mode,
-            dynamic=dynamic,
         )
     return model
 
@@ -112,44 +108,6 @@ def cosine_lr(
     progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
     progress = min(max(progress, 0.0), 1.0)
     return lr_final + 0.5 * (lr_init - lr_final) * (1.0 + math.cos(math.pi * progress))
-
-
-def parse_ctx_schedule(spec: str, full_ctx: int) -> list[tuple[int, float]]:
-    """Parse ``"256:0.4,512:0.3,1024:0.3"`` into ``[(ctx, step_fraction), ...]``.
-
-    Each phase trains at the given context length for that fraction of total
-    steps. The last phase must use the full (eval) context so the model finishes
-    at its target length. Fractions are normalized to sum to 1.
-    """
-    phases: list[tuple[int, float]] = []
-    for part in spec.split(","):
-        ctx_str, _, frac_str = part.partition(":")
-        phases.append((int(ctx_str), float(frac_str)))
-    if phases[-1][0] != full_ctx:
-        raise ValueError(
-            f"--ctx-schedule must end at the full context {full_ctx}; got {phases[-1][0]}"
-        )
-    total = sum(frac for _, frac in phases)
-    return [(ctx, frac / total) for ctx, frac in phases]
-
-
-def scheduled_ctx_batch(
-    step_idx: int, total_steps: int, schedule: list[tuple[int, float]], tokens_per_step: int
-) -> tuple[int, int]:
-    """Map a 0-based step to its (context_length, batch_size).
-
-    Holds tokens-per-step fixed (``batch = tokens_per_step // ctx``) so only the
-    WKV sequential depth shrinks early — same tokens seen, same optimizer scale,
-    a strictly cheaper step on the latency-bound recurrence.
-    """
-    frac = step_idx / max(1, total_steps)
-    acc = 0.0
-    for ctx, phase_frac in schedule:
-        acc += phase_frac
-        if frac < acc:
-            return ctx, max(1, tokens_per_step // ctx)
-    ctx = schedule[-1][0]
-    return ctx, max(1, tokens_per_step // ctx)
 
 
 def wsd_lr(
@@ -259,18 +217,6 @@ def main() -> None:
         help="SpikeGPT block variant for fresh runs; checkpoints keep their saved model type",
     )
     parser.add_argument("--batch", type=int, default=16)
-    parser.add_argument(
-        "--ctx-schedule",
-        default=None,
-        help=(
-            "Context-length warmup: e.g. '256:0.4,512:0.3,1024:0.3' trains at ctx 256 "
-            "for the first 40%% of steps, 512 for 30%%, then the full --context-length. "
-            "Tokens/step (batch*context) are held constant, so only the latency-bound WKV "
-            "sequential depth shrinks early — same tokens seen, ~8%% less wall-clock at "
-            "matched quality (RWKV length-generalizes, so eval is unaffected). "
-            "The last phase must equal --context-length."
-        ),
-    )
     parser.add_argument("--steps", type=int, default=50)
     parser.add_argument("--lr", type=float, default=3e-3)
     parser.add_argument(
@@ -629,11 +575,6 @@ def main() -> None:
     print_model_summary(raw_model)
     print()
 
-    # A ctx-schedule trains at a few distinct (T, B) shapes; raise the recompile
-    # cache so any residual shape specialization (eval/warmup) does not trip the
-    # fullgraph recompile limit on top of dynamic=True below.
-    if args.ctx_schedule:
-        torch._dynamo.config.cache_size_limit = max(torch._dynamo.config.cache_size_limit, 64)
     # regional-lite keeps its fast-compile options preset; regional uses --compile-mode
     # (mode and options are mutually exclusive in torch.compile).
     regional_lite = args.compile == "regional-lite"
@@ -644,9 +585,6 @@ def main() -> None:
             fullgraph=args.compile == "regional",
             options=REGIONAL_LITE_COMPILE_OPTIONS if regional_lite else None,
             mode=compile_mode,
-            # Shape-polymorphic graph so a ctx-schedule's varying T/B does not
-            # force a per-phase fullgraph recompile (which trips the limit).
-            dynamic=True if args.ctx_schedule else None,
         )
         if args.compile in ("regional", "regional-lite")
         else compile_training_model(raw_model, compile_model)
@@ -800,15 +738,6 @@ def main() -> None:
                 step=0,
             )
 
-        ctx_schedule = (
-            parse_ctx_schedule(args.ctx_schedule, config.context_length)
-            if args.ctx_schedule
-            else None
-        )
-        tokens_per_step = args.batch * config.context_length
-        if ctx_schedule is not None:
-            print(f"ctx_schedule={ctx_schedule} tokens_per_step={tokens_per_step}", flush=True)
-
         for step in range(1, args.steps + 1):
             global_step = previous_steps + step
             if args.lr_final is not None:
@@ -828,16 +757,10 @@ def main() -> None:
                     )
                 for group in optimizer.param_groups:
                     group["lr"] = lr_now
-            if ctx_schedule is not None:
-                step_ctx, step_batch = scheduled_ctx_batch(
-                    step - 1, args.steps, ctx_schedule, tokens_per_step
-                )
-            else:
-                step_ctx, step_batch = config.context_length, args.batch
             inputs, targets = sample_token_batch(
                 train_tokens,
-                batch_size=step_batch,
-                context_length=step_ctx,
+                batch_size=args.batch,
+                context_length=config.context_length,
                 device=args.device,
             )
             if torch_device.type == "cuda":
