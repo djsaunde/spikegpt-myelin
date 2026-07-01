@@ -137,23 +137,30 @@ Then add `--wandb` to any training command to stream metrics to your dashboard.
 
 ## Step 7: A short GPU run on real data
 
-This is the first "real" run: a small character-level model on enwik8, kept
-short so it finishes quickly rather than chasing the paper result.
+This is the first "real" run: a small byte-level model on enwik8, kept short so
+it finishes quickly rather than chasing the paper result.
 
-First, generate the dataset (not committed to the repo):
+First, get the dataset (not committed to the repo). enwik8 is the first 100 MB of
+English Wikipedia; download it once and carve off the held-out test tail (the
+last 5 M bytes, matching the paper's train/val/test split):
 
 ```bash
-uv run python examples/prepare_token_corpus.py --help   # see available options
+mkdir -p data
+curl -fsSL https://mattmahoney.net/dc/enwik8.zip -o data/enwik8.zip
+cd data && unzip -q enwik8.zip && rm enwik8.zip && cd ..   # -> data/enwik8 (100,000,000 bytes)
+tail -c 5000000 data/enwik8 > data/enwik8_test             # last 5 M bytes = test split
 ```
 
-This writes the enwik8 data (into `data/` by convention). Then train a small
-model for a few hundred steps:
+Then train a small model for a few hundred steps. The training script makes the
+disjoint train (first 90 M) / val (next 5 M) / test (last 5 M) split internally
+from `data/enwik8`, so the test tail is never trained on:
 
 ```bash
 uv run --extra tracking python examples/train_tiny_spikegpt.py \
   --device cuda \
   --text-file data/enwik8 --vocab byte \
   --context-length 256 --layers 4 --embedding 256 \
+  --test-tokens 5000000 --min-val-tokens 5000000 --val-fraction 0.0 \
   --batch 16 --steps 500 \
   --lr 2e-3 --lr-final 1e-5 --warmup-steps 100 \
   --weight-decay 0.1 --amp bf16 --compile regional \
@@ -174,10 +181,11 @@ only.
 
 ```bash
 uv run python examples/evaluate_spikegpt_checkpoint.py runs/enwik8_small.best.pt \
-  --text-file data/enwik8 --no-sample
+  --text-file data/enwik8_test --no-sample
 ```
 
-This reports full-context strided BPC on the held-out tail.
+This reports full-context strided BPC on the held-out test tail (`data/enwik8_test`,
+the 5 M bytes never seen during training).
 
 ## Reading the output
 
