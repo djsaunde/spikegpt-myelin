@@ -8,7 +8,7 @@ dependencies = [
     "myelin",
     "numpy>=1.24.4",
     "torch>=2.13.0.dev0",
-    "torchvision",
+    "torchvision; sys_platform != 'darwin'",
 ]
 license = "MIT"
 
@@ -24,8 +24,16 @@ name = "pytorch-nightly"
 url = "https://download.pytorch.org/whl/nightly/cu130"
 explicit = true
 
+[[tool.uv.index]]
+name = "pytorch-nightly-cpu"
+url = "https://download.pytorch.org/whl/nightly/cpu"
+explicit = true
+
 [tool.uv.sources]
-torch = { index = "pytorch-nightly" }
+torch = [
+    { index = "pytorch-nightly-cpu", marker = "sys_platform == 'darwin'" },
+    { index = "pytorch-nightly", marker = "sys_platform != 'darwin'" },
+]
 torchvision = { index = "pytorch-nightly" }
 triton = { index = "pytorch-nightly", marker = "sys_platform == 'linux'" }
 myelin = { git = "https://github.com/djsaunde/myelin.git" }

@@ -29,8 +29,6 @@ from myelin.surrogates import (
     hard_surrogate_spike,
     surrogate_from_name,
 )
-from myelin.triton.lif import surrogate_id as lif_surrogate_id
-from myelin.triton.lif_bf16 import surrogate_lif_bf16io
 from torch import nn
 from torch._higher_order_ops.associative_scan import associative_scan
 from torch.nn import functional as F
@@ -833,6 +831,10 @@ class SpikingSequenceLIF(nn.Module):
             and inputs.dtype in (torch.float16, torch.bfloat16)
             and not self.recompute
         ):
+            # Local import: keeps the module importable without Triton on CPU-only platforms.
+            from myelin.triton.lif import surrogate_id as lif_surrogate_id
+            from myelin.triton.lif_bf16 import surrogate_lif_bf16io
+
             currents = inputs.movedim(1, 0).contiguous()  # [T, B, C]
             initial = LIFState(membrane=currents.new_zeros(currents.shape[1:]))
             spikes = surrogate_lif_bf16io(
