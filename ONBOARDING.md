@@ -19,7 +19,7 @@ training run finished.
 
 | Requirement | Notes |
 |---|---|
-| Platform | **Linux x86_64 + NVIDIA GPU** for real training (Triton/CUDA kernels). **macOS (Apple Silicon)** works CPU-only for install, imports, and the tiny smoke run below (no Triton, no GPU training). On Windows, please use WSL2. |
+| Platform | **Linux x86_64 + NVIDIA GPU** for real training (Triton/CUDA kernels). **macOS (Apple Silicon)** works CPU-only for install, imports, and the tiny smoke run below (no Triton, no GPU training). On Windows, please use WSL2. **No local GPU?** See [Running on rented GPUs (Lambda Cloud)](#running-on-rented-gpus-lambda-cloud) to run the GPU steps from your laptop. |
 | NVIDIA GPU (CUDA) | Required for real runs and all benchmarks. Not needed for the CPU smoke run. |
 | Python 3.11 | Both repos pin 3.11. `uv` installs it for you if missing. |
 | `git` | To clone the repo and (via `uv`) the `myelin` dependency. |
@@ -213,6 +213,90 @@ the 5 M bytes never seen during training).
   driver. The nightly build targets CUDA 13; a very old driver will not work.
 - **First GPU step hangs for a while**: that is `--compile regional` compiling
   Triton kernels. Wait it out, or drop to `--compile off` for quick iteration.
+
+## Running on rented GPUs (Lambda Cloud)
+
+No local NVIDIA GPU (e.g. you're on a Mac)? You can run the GPU steps above —
+Step 7 training, benchmarks, evaluation — on a rented [Lambda
+Cloud](https://lambda.ai) H100 straight from your laptop. The `lambda/` harness
+launches an instance, replicates *this exact environment* on it, runs your
+command, copies results back, and — importantly — **terminates the instance
+afterward so you stop paying**.
+
+### One-time setup
+
+1. **Lambda account + credits.** Sign up at [lambda.ai](https://lambda.ai), add
+   credits, and confirm your account has H100 quota (new accounts may need to
+   request GPU access). Create an API key at
+   <https://cloud.lambdalabs.com/api-keys>.
+2. **Give the harness your key.** Export it in your shell (or, if you use
+   [direnv](https://direnv.net), put it in a gitignored `.envrc`):
+   ```bash
+   export LAMBDA_API_KEY=secret_...        # from the api-keys page
+   ```
+3. **GitHub + SSH.** The harness reuses the `gh` auth from Step 1 to clone the
+   private `myelin` repo onto the VM — no extra token setup. Register your SSH
+   public key with Lambda once (defaults to `~/.ssh/id_ed25519`; pass
+   `--key <path>` if yours is elsewhere):
+   ```bash
+   python3 lambda/run.py keys --add
+   ```
+
+The driver is stdlib-only — run it with your system `python3`, no venv needed.
+
+### Smoke test (confirm it all works, ~5–8 min, ~$0.60)
+
+```bash
+python3 lambda/run.py smoke
+```
+
+This launches an H100, replicates the env (installs `uv`, syncs the frozen CUDA
+env, clones `myelin`, and adds NVIDIA CUDA-13 forward-compat so the cu130 torch
+runs on Lambda's driver), runs a torch + Triton-WKV kernel check on the GPU, then
+terminates. Success looks like the torch/triton versions, `device NVIDIA H100 …`,
+and `triton WKV ok`.
+
+### Run an experiment
+
+`run -- <cmd>` and `train` launch, provision, run, copy `runs/` back, then
+terminate. The `data/enwik8` you built in Step 7 is rsynced up automatically, so
+training on real data just works:
+
+```bash
+# the Step-7 short run, but on a rented H100:
+python3 lambda/run.py train --layers 4 --embedding 256 --context-length 256 \
+  --batch 16 --steps 500 \
+  -- --test-tokens 5000000 --min-val-tokens 5000000 --val-fraction 0.0 \
+     --best-checkpoint-out runs/enwik8_small.best.pt
+
+# or any command in the synced env:
+python3 lambda/run.py run -- python -m spikegpt.benchmarks.wkv_throughput --device cuda
+```
+
+### Iterating: keep one instance up
+
+The heavy env sync runs on every fresh VM (several minutes). For a work session,
+provision one instance once and reuse it:
+
+```bash
+python3 lambda/run.py launch --name spikegpt-dev     # prints  <id>  <ip>
+python3 lambda/run.py provision <id>                 # env sync, once
+python3 lambda/run.py exec <id> -- python examples/train_tiny_spikegpt.py --device cuda ...
+python3 lambda/run.py fetch <id> runs/ runs/         # pull checkpoints/artifacts down
+python3 lambda/run.py terminate <id>                 # WHEN DONE — stops billing
+```
+
+### ⚠️ You are billed by the hour until you terminate
+
+- `python3 lambda/run.py ls` — everything still running (and charging).
+- `python3 lambda/run.py terminate --all` — the panic button.
+- One-shot `smoke`/`run`/`train` self-terminate even on error or Ctrl-C; a
+  `launch`ed instance stays up until *you* terminate it.
+
+The rented H100 (sm_90) is a different GPU architecture than the RTX 5090
+(sm_120), so use it for A/B experiments, convergence curves, and memory/capacity
+checks — not for headline wall-clock numbers. Full command list:
+[`lambda/README.md`](lambda/README.md).
 
 ## Where to go next
 

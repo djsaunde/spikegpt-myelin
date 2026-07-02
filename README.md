@@ -75,7 +75,9 @@ uv run python examples/evaluate_spikegpt_checkpoint.py runs/enwik8_fast.best.pt 
   (run with `python -m spikegpt.benchmarks.<name>`).
 - `examples/`: training, evaluation, energy, neuromorphic-feasibility scripts and
   the Streamlit playground (`examples/app/`).
-- `modal/`: cloud training launchers.
+- `modal/`: serverless (Modal) cloud training/experiment launchers.
+- `lambda/`: Lambda Cloud VM harness (launch/provision/run/terminate GPU
+  instances via the Cloud API); see `lambda/README.md`.
 - `docs/`: WKV recurrence rationale, neuromorphic deployment notes.
 
 ## Other reproductions
