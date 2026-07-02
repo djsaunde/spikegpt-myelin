@@ -6,6 +6,10 @@ dist/
 wheels/
 *.egg-info
 
+# Local env / secrets (Lambda API key, etc.)
+.envrc
+.direnv/
+
 # Virtual environments
 .venv
 
