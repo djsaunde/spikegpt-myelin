@@ -2,10 +2,73 @@
 
 from __future__ import annotations
 
+import argparse
+import importlib.util
+import sys
+from pathlib import Path
+
 import torch
 
 from spikegpt import MemmapTokenCorpus, TokenCorpusWriter
 from spikegpt.language import sample_token_batch
+
+# The dataset presets live in the examples/ script (not an installed package), so
+# load it by path to test the source-resolution logic without any network access.
+# Register it in sys.modules before exec so its @dataclass can resolve field types.
+_PREP_PATH = Path(__file__).resolve().parents[1] / "examples" / "prepare_token_corpus.py"
+_spec = importlib.util.spec_from_file_location("prepare_token_corpus", _PREP_PATH)
+prepare_token_corpus = importlib.util.module_from_spec(_spec)
+sys.modules[_spec.name] = prepare_token_corpus
+_spec.loader.exec_module(prepare_token_corpus)
+
+
+def _source_args(**overrides) -> argparse.Namespace:
+    base = {
+        "dataset": None,
+        "hf_dataset": None,
+        "hf_config": None,
+        "hf_split": None,
+        "text_column": None,
+    }
+    base.update(overrides)
+    return argparse.Namespace(**base)
+
+
+def test_fineweb_edu_preset_resolves_to_hf_source() -> None:
+    hf_dataset, hf_config, hf_split, text_column = prepare_token_corpus.resolve_hf_source(
+        _source_args(dataset="fineweb-edu")
+    )
+    assert hf_dataset == "HuggingFaceFW/fineweb-edu"
+    assert hf_config == "sample-10BT"
+    assert hf_split == "train"
+    assert text_column == "text"
+
+
+def test_openwebtext_preset_resolves_with_no_config() -> None:
+    hf_dataset, hf_config, hf_split, text_column = prepare_token_corpus.resolve_hf_source(
+        _source_args(dataset="openwebtext")
+    )
+    assert hf_dataset == "Skylion007/openwebtext"
+    assert hf_config is None
+    assert (hf_split, text_column) == ("train", "text")
+
+
+def test_explicit_hf_flags_override_preset_fields() -> None:
+    # --hf-config picks a larger FineWeb-Edu sample than the preset default.
+    _, hf_config, hf_split, _ = prepare_token_corpus.resolve_hf_source(
+        _source_args(dataset="fineweb-edu", hf_config="sample-100BT", hf_split="test")
+    )
+    assert hf_config == "sample-100BT"
+    assert hf_split == "test"
+
+
+def test_raw_hf_dataset_without_preset_falls_back_to_defaults() -> None:
+    hf_dataset, hf_config, hf_split, text_column = prepare_token_corpus.resolve_hf_source(
+        _source_args(hf_dataset="some/repo")
+    )
+    assert hf_dataset == "some/repo"
+    assert hf_config is None
+    assert (hf_split, text_column) == ("train", "text")
 
 
 def test_token_corpus_write_open_round_trip(tmp_path) -> None:

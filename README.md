@@ -46,7 +46,18 @@ PyTorch nightly CUDA index (torch 2.13 is required, the WKV path uses
 playground, and `--extra dev` for the test/lint toolchain.
 
 Datasets (`data/enwik8`, WikiText) are not committed; regenerate them with
-`examples/prepare_token_corpus.py`.
+`examples/prepare_token_corpus.py`. For large-scale BPE pretraining, that script
+also streams named HuggingFace datasets via `--dataset` — `fineweb-edu`
+(educational-quality web text; defaults to the 10B-token sample) or `openwebtext`
+— e.g.:
+
+```bash
+uv run --extra tokenization python examples/prepare_token_corpus.py \
+  --dataset fineweb-edu --max-tokens 1_000_000_000 --output data/fineweb_edu_1b.bin
+```
+
+then train from the tokenized `.bin` with `--train-bin data/fineweb_edu_1b.bin
+--vocab bpe`.
 
 ## Train and evaluate
 

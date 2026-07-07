@@ -2,7 +2,8 @@
 
 Two sources:
   * local text files (``--text-file`` repeatable) — e.g. WikiText train/valid/test;
-  * a streaming HuggingFace dataset (``--hf-dataset``) — e.g. OpenWebText2.
+  * a streaming HuggingFace dataset — either a named ``--dataset`` preset
+    (``fineweb-edu``, ``openwebtext``) or an arbitrary ``--hf-dataset`` repo id.
 
 Tokens are written with the same vocabulary the model will train under (default
 the GPT-NeoX BPE), so the ``.bin`` ids match the checkpoint's tokenizer exactly.
@@ -13,10 +14,12 @@ Examples:
   # WikiText-103 splits -> three bins
   uv run --extra tokenization python examples/prepare_token_corpus.py \\
     --text-file wikitext-103/wiki.train.tokens --output data/wikitext103_train.bin
-  # OpenWebText2 (streaming), capped for a validation slice
+  # FineWeb-Edu (streaming, 10B-token sample), capped to a 1B-token slice
   uv run --extra tokenization python examples/prepare_token_corpus.py \\
-    --hf-dataset Skylion007/openwebtext --hf-split train --text-column text \\
-    --max-tokens 1_000_000_000 --output data/owt_1b.bin
+    --dataset fineweb-edu --max-tokens 1_000_000_000 --output data/fineweb_edu_1b.bin
+  # OpenWebText (streaming), capped for a validation slice
+  uv run --extra tokenization python examples/prepare_token_corpus.py \\
+    --dataset openwebtext --max-tokens 1_000_000_000 --output data/owt_1b.bin
 """
 
 from __future__ import annotations
@@ -25,9 +28,46 @@ import argparse
 import os
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from spikegpt import BPEVocabulary, ByteVocabulary, TokenCorpusWriter
+
+
+@dataclass(frozen=True)
+class DatasetPreset:
+    """A named streaming HuggingFace source with sensible defaults."""
+
+    hf_dataset: str
+    hf_config: str | None
+    hf_split: str
+    text_column: str
+
+
+# Curated streaming-dataset choices for pretraining. A convenience wrapper over
+# the raw --hf-* flags so a corpus can be prepared by name; any --hf-* flag still
+# overrides the matching preset field (e.g. --hf-config sample-100BT for more data).
+DATASET_PRESETS: dict[str, DatasetPreset] = {
+    # FineWeb-Edu: educational-quality filtering of FineWeb CommonCrawl (1.3T tokens
+    # total; Apache-2.0 / ODC-By, ungated). Defaults to the 10B-token sample — pass
+    # --hf-config sample-100BT / sample-350BT / default for larger slices.
+    "fineweb-edu": DatasetPreset("HuggingFaceFW/fineweb-edu", "sample-10BT", "train", "text"),
+    # OpenWebText: ~8M-doc open reproduction of GPT-2's WebText (the SpikeGPT paper's
+    # OpenWebText2 pretraining stand-in used for the 216M WikiText result).
+    "openwebtext": DatasetPreset("Skylion007/openwebtext", None, "train", "text"),
+}
+
+
+def resolve_hf_source(args: argparse.Namespace) -> tuple[str | None, str | None, str, str]:
+    """Resolve (hf_dataset, hf_config, hf_split, text_column) from a --dataset
+    preset and/or explicit --hf-* overrides. Explicit flags always win over the
+    preset; the preset wins over the built-in train/text fallbacks."""
+    preset = DATASET_PRESETS[args.dataset] if args.dataset else None
+    hf_dataset = args.hf_dataset or (preset.hf_dataset if preset else None)
+    hf_config = args.hf_config or (preset.hf_config if preset else None)
+    hf_split = args.hf_split or (preset.hf_split if preset else None) or "train"
+    text_column = args.text_column or (preset.text_column if preset else None) or "text"
+    return hf_dataset, hf_config, hf_split, text_column
 
 
 def build_vocab(args: argparse.Namespace):
@@ -57,10 +97,16 @@ def main() -> None:
     parser.add_argument("--vocab", choices=("bpe", "byte"), default="bpe")
     parser.add_argument("--bpe-tokenizer", default="EleutherAI/gpt-neox-20b")
     parser.add_argument("--text-file", action="append", help="local text file(s); repeatable")
+    parser.add_argument(
+        "--dataset",
+        choices=tuple(DATASET_PRESETS),
+        help="named streaming dataset preset (fills --hf-dataset/--hf-config/--hf-split/"
+        "--text-column); any --hf-* flag overrides the matching preset field",
+    )
     parser.add_argument("--hf-dataset", help="streaming HuggingFace dataset name")
     parser.add_argument("--hf-config", help="HuggingFace dataset config (e.g. wikitext-103-raw-v1)")
-    parser.add_argument("--hf-split", default="train")
-    parser.add_argument("--text-column", default="text")
+    parser.add_argument("--hf-split", help="HuggingFace split (default: train)")
+    parser.add_argument("--text-column", help="text field in the dataset (default: text)")
     parser.add_argument(
         "--eos-id",
         type=int,
@@ -80,8 +126,12 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if not args.text_file and not args.hf_dataset:
-        parser.error("provide --text-file or --hf-dataset")
+    if args.text_file and (args.dataset or args.hf_dataset):
+        parser.error("provide either --text-file or a streaming dataset, not both")
+    if not args.text_file:
+        args.hf_dataset, args.hf_config, args.hf_split, args.text_column = resolve_hf_source(args)
+        if not args.hf_dataset:
+            parser.error("provide --text-file, --dataset, or --hf-dataset")
 
     vocab = build_vocab(args)
     start = time.perf_counter()

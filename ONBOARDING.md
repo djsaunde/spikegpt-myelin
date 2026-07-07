@@ -187,6 +187,22 @@ uv run python examples/evaluate_spikegpt_checkpoint.py runs/enwik8_small.best.pt
 This reports full-context strided BPC on the held-out test tail (`data/enwik8_test`,
 the 5 M bytes never seen during training).
 
+## Bigger datasets (optional)
+
+enwik8 is byte-level. For subword (BPE) pretraining on more data, tokenize a
+streaming HuggingFace dataset into a `.bin` corpus first. `--dataset` gives you
+named choices — `fineweb-edu` (educational-quality web text, defaults to the
+10B-token sample) and `openwebtext`:
+
+```bash
+uv run --extra tokenization python examples/prepare_token_corpus.py \
+  --dataset fineweb-edu --max-tokens 1_000_000_000 --output data/fineweb_edu_1b.bin
+```
+
+Then train from it with `--train-bin data/fineweb_edu_1b.bin --vocab bpe` instead
+of `--text-file ... --vocab byte`. (Pass `--hf-config sample-100BT` for a larger
+FineWeb-Edu slice.)
+
 ## Reading the output
 
 - **Train / Val Loss**: cross-entropy. Lower is better.
