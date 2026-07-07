@@ -318,11 +318,34 @@ The heavy env sync runs on every fresh VM (several minutes). For a work session,
 provision one instance once and reuse it:
 
 ```bash
-python3 lambda/run.py launch --name spikegpt-dev     # prints  <id>  <ip>
+python3 lambda/run.py launch --type gpu_1x_a100_sxm4 --name spikegpt-dev  # prints  <id>  <ip>
 python3 lambda/run.py provision <id>                 # env sync, once
 python3 lambda/run.py exec <id> -- python examples/train_tiny_spikegpt.py --device cuda ...
 python3 lambda/run.py fetch <id> runs/ runs/         # pull checkpoints/artifacts down
 python3 lambda/run.py terminate <id>                 # WHEN DONE — stops billing
+```
+
+`exec` flags (`--extra`, `--key`) must come *before* the `<id>` (it's a
+positional) — anything after the id is swallowed into the remote command, so
+`--extra` there is silently ignored and falls back to `cuda`:
+
+```bash
+python3 lambda/run.py exec --extra tokenization <id> -- python ...   # ✅ extra applied
+python3 lambda/run.py exec <id> --extra tokenization -- python ...   # ❌ ignored (uses cuda)
+```
+
+For the BPE path ([Bigger datasets](#bigger-datasets-optional)), tokenize *on
+the instance* rather than uploading a multi-GB `.bin` — `exec` doesn't rsync, so
+a corpus built by one `exec` persists for the next (don't train via one-shot
+`run` afterward; its `--delete` rsync would wipe it):
+
+```bash
+python3 lambda/run.py exec --extra tokenization <id> -- \
+  python examples/prepare_token_corpus.py \
+  --dataset fineweb-edu --max-tokens 600_000_000 --output data/fineweb_edu_600m.bin
+python3 lambda/run.py exec --extra cuda <id> -- \
+  python examples/train_tiny_spikegpt.py --device cuda --vocab bpe \
+  --train-bin data/fineweb_edu_600m.bin --layers 4 --embedding 128 ...
 ```
 
 ### ⚠️ You are billed by the hour until you terminate
