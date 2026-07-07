@@ -289,6 +289,29 @@ python3 lambda/run.py train --layers 4 --embedding 256 --context-length 256 \
 python3 lambda/run.py run -- python -m spikegpt.benchmarks.wkv_throughput --device cuda
 ```
 
+**Flag placement matters.** Everything *after* `--` is the command that runs on the
+VM; harness flags (`--type`, `--extra`, `--region`, `--name`, `--keep`, …) must come
+*before* it. A harness flag placed after `--` is silently swallowed into the command
+and ignored — e.g. a stray `--type` after `--` falls back to the default GPU (see
+below), so keep them before the separator:
+
+```bash
+python3 lambda/run.py run \
+  --type gpu_1x_a100_sxm4 --extra "cuda --extra tokenization" \
+  -- \
+  python examples/train_tiny_spikegpt.py --device cuda --vocab bpe \
+  --train-bin data/fineweb_edu_600m.bin --layers 4 --embedding 128 ...
+```
+
+**Choosing the GPU.** `--type` selects the instance type; it defaults to
+`gpu_1x_h100_sxm5`. Lambda capacity comes and goes, so check what's actually
+available before launching and pass a type that has capacity:
+
+```bash
+python3 lambda/run.py types            # all types + which regions have capacity
+python3 lambda/run.py types --gpu a100 # filter, e.g. gpu_1x_a100_sxm4
+```
+
 ### Iterating: keep one instance up
 
 The heavy env sync runs on every fresh VM (several minutes). For a work session,
@@ -313,6 +336,15 @@ The rented H100 (sm_90) is a different GPU architecture than the RTX 5090
 (sm_120), so use it for A/B experiments, convergence curves, and memory/capacity
 checks — not for headline wall-clock numbers. Full command list:
 [`lambda/README.md`](lambda/README.md).
+
+### Troubleshooting
+
+- **`error: No capacity for gpu_1x_h100_sxm5 anywhere right now`**: two things at
+  once. First, `gpu_1x_h100_sxm5` is the *default* type — if you passed `--type`
+  and still see the default here, the flag landed *after* `--` and was ignored;
+  move it before the separator. Second, that type genuinely has no capacity right
+  now: run `python3 lambda/run.py types` and pass a `--type` that shows an
+  available region (e.g. `--type gpu_1x_a100_sxm4`).
 
 ## Where to go next
 
