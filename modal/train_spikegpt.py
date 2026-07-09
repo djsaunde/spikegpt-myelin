@@ -124,6 +124,7 @@ def _run_spikegpt(
     lr_final: float | None,
     warmup_steps: int,
     dropout: float,
+    weight_decay: float,
     grad_clip: float,
     log_every: int,
     eval_every: int,
@@ -182,6 +183,8 @@ def _run_spikegpt(
         str(warmup_steps),
         "--dropout",
         str(dropout),
+        "--weight-decay",
+        str(weight_decay),
         "--grad-clip",
         str(grad_clip),
         "--log-every",
@@ -204,7 +207,22 @@ def _run_spikegpt(
     subprocess.run(command, cwd=REMOTE_ROOT, check=True)
 
 
-@app.function(gpu=GPU, timeout=12 * 60 * 60, volumes={CORPUS_DIR: corpora})
+@app.function(cpu=16, memory=32 * 1024, timeout=24 * 60 * 60, volumes={CORPUS_DIR: corpora})
+def prepare_corpus(
+    dataset: str = "fineweb-edu",
+    hf_config: str = "sample-100BT",
+    max_tokens: int = 25_000_000_000,
+) -> str:
+    """Stream + tokenize a corpus to the persistent volume on a CPU-only container,
+    so training runs with the same (dataset, hf_config, max_tokens) hit the cache:
+
+        modal run --detach modal/train_spikegpt.py::prepare_corpus \\
+            --dataset fineweb-edu --hf-config sample-100BT --max-tokens 25000000000
+    """
+    return str(_prepare_bpe_corpus(dataset, hf_config, max_tokens))
+
+
+@app.function(gpu=GPU, timeout=24 * 60 * 60, volumes={CORPUS_DIR: corpora})
 def run_h100(
     *,
     dataset: str = "fineweb-edu",
@@ -222,6 +240,7 @@ def run_h100(
     lr_final: float | None = 6.0e-5,
     warmup_steps: int = 200,
     dropout: float = 0.0,
+    weight_decay: float = 0.01,
     grad_clip: float = 1.0,
     log_every: int = 100,
     eval_every: int = 500,
@@ -229,6 +248,7 @@ def run_h100(
     activation_checkpointing: bool = False,
     wandb: bool = False,
     wandb_project: str = "myelin",
+    wandb_run_name: str | None = None,
 ) -> None:
     """Run a single-GPU SpikeGPT training job on H100."""
 
@@ -248,6 +268,7 @@ def run_h100(
         lr_final=lr_final,
         warmup_steps=warmup_steps,
         dropout=dropout,
+        weight_decay=weight_decay,
         grad_clip=grad_clip,
         log_every=log_every,
         eval_every=eval_every,
@@ -255,7 +276,7 @@ def run_h100(
         activation_checkpointing=activation_checkpointing,
         wandb=wandb,
         wandb_project=wandb_project,
-        wandb_run_name=f"modal-spikegpt-{dataset}" if wandb else None,
+        wandb_run_name=wandb_run_name or (f"modal-spikegpt-{dataset}" if wandb else None),
     )
 
 
@@ -277,6 +298,7 @@ def main(
     lr_final: float = 6.0e-5,
     warmup_steps: int = 200,
     dropout: float = 0.0,
+    weight_decay: float = 0.01,
     grad_clip: float = 1.0,
     log_every: int = 100,
     eval_every: int = 500,
@@ -284,6 +306,7 @@ def main(
     activation_checkpointing: bool = False,
     wandb: bool = False,
     wandb_project: str = "myelin",
+    wandb_run_name: str | None = None,
 ) -> None:
     """Launch a single-GPU Modal SpikeGPT training job.
 
@@ -309,6 +332,7 @@ def main(
         "lr_final": lr_final,
         "warmup_steps": warmup_steps,
         "dropout": dropout,
+        "weight_decay": weight_decay,
         "grad_clip": grad_clip,
         "log_every": log_every,
         "eval_every": eval_every,
@@ -316,6 +340,7 @@ def main(
         "activation_checkpointing": activation_checkpointing,
         "wandb": wandb,
         "wandb_project": wandb_project,
+        "wandb_run_name": wandb_run_name,
     }
     if target == "h100":
         run_h100.remote(**kwargs)

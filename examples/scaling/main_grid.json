@@ -1,0 +1,151 @@
+{
+  "defaults": {
+    "corpus_tokens": 25000000000
+  },
+  "runs": [
+    {
+      "name": "c3e17_384d",
+      "layers": 10,
+      "embedding": 384,
+      "tokens": 1300000000,
+      "lr": 0.002667,
+      "tier_flops": 3e+17
+    },
+    {
+      "name": "c3e17_512d",
+      "layers": 12,
+      "embedding": 512,
+      "tokens": 750000000,
+      "lr": 0.002,
+      "tier_flops": 3e+17
+    },
+    {
+      "name": "c3e17_640d",
+      "layers": 14,
+      "embedding": 640,
+      "tokens": 468000000,
+      "lr": 0.0016,
+      "tier_flops": 3e+17
+    },
+    {
+      "name": "c3e17_768d",
+      "layers": 18,
+      "embedding": 768,
+      "tokens": 283000000,
+      "lr": 0.001333,
+      "tier_flops": 3e+17
+    },
+    {
+      "name": "c1e18_384d",
+      "layers": 10,
+      "embedding": 384,
+      "tokens": 4332000000,
+      "lr": 0.002667,
+      "tier_flops": 1e+18
+    },
+    {
+      "name": "c1e18_512d",
+      "layers": 12,
+      "embedding": 512,
+      "tokens": 2501000000,
+      "lr": 0.002,
+      "tier_flops": 1e+18
+    },
+    {
+      "name": "c1e18_640d",
+      "layers": 14,
+      "embedding": 640,
+      "tokens": 1562000000,
+      "lr": 0.0016,
+      "tier_flops": 1e+18
+    },
+    {
+      "name": "c1e18_768d",
+      "layers": 18,
+      "embedding": 768,
+      "tokens": 944000000,
+      "lr": 0.001333,
+      "tier_flops": 1e+18
+    },
+    {
+      "name": "c1e18_1024d",
+      "layers": 20,
+      "embedding": 1024,
+      "tokens": 514000000,
+      "lr": 0.001,
+      "tier_flops": 1e+18
+    },
+    {
+      "name": "c3e18_512d",
+      "layers": 12,
+      "embedding": 512,
+      "tokens": 7503000000,
+      "lr": 0.002,
+      "tier_flops": 3e+18
+    },
+    {
+      "name": "c3e18_640d",
+      "layers": 14,
+      "embedding": 640,
+      "tokens": 4685000000,
+      "lr": 0.0016,
+      "tier_flops": 3e+18
+    },
+    {
+      "name": "c3e18_768d",
+      "layers": 18,
+      "embedding": 768,
+      "tokens": 2831000000,
+      "lr": 0.001333,
+      "tier_flops": 3e+18
+    },
+    {
+      "name": "c3e18_1024d",
+      "layers": 20,
+      "embedding": 1024,
+      "tokens": 1543000000,
+      "lr": 0.001,
+      "tier_flops": 3e+18
+    },
+    {
+      "name": "c3e18_1280d",
+      "layers": 24,
+      "embedding": 1280,
+      "tokens": 869000000,
+      "lr": 0.0008,
+      "tier_flops": 3e+18
+    },
+    {
+      "name": "c1e19_640d",
+      "layers": 14,
+      "embedding": 640,
+      "tokens": 15617000000,
+      "lr": 0.0016,
+      "tier_flops": 1e+19
+    },
+    {
+      "name": "c1e19_768d",
+      "layers": 18,
+      "embedding": 768,
+      "tokens": 9436000000,
+      "lr": 0.001333,
+      "tier_flops": 1e+19
+    },
+    {
+      "name": "c1e19_1024d",
+      "layers": 20,
+      "embedding": 1024,
+      "tokens": 5142000000,
+      "lr": 0.001,
+      "tier_flops": 1e+19
+    },
+    {
+      "name": "c1e19_1280d",
+      "layers": 24,
+      "embedding": 1280,
+      "tokens": 2896000000,
+      "lr": 0.0008,
+      "tier_flops": 1e+19
+    }
+  ]
+}
