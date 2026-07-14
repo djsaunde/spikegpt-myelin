@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import shlex
 import subprocess
 from dataclasses import dataclass
@@ -255,32 +256,93 @@ def lambda_command(run: PlannedRun) -> list[str]:
     return ["python3", "lambda/run.py", "run", "--name", run.name, "--", *trainer]
 
 
+def local_command(run: PlannedRun, corpus: str | None = None) -> list[str]:
+    """One-GPU local run on this box (the RTX 5090), matching the pilot recipe.
+
+    batch-16, bf16, regional/default compile; in-loop eval capped to 2M tokens
+    (the eval-cost guard); periodic --checkpoint-out so a crash can be resumed via
+    examples/run_with_resume.sh. Corpus defaults to the grid's cached .bin but can
+    be overridden (e.g. a smaller prefix corpus for the cheap shakedown tier).
+    """
+    spec = run.spec
+    corpus_path = corpus or f"data/{spec['dataset']}_{spec['hf_config']}_{spec['corpus_tokens']}.bin"
+    ckpt_every = min(2000, max(500, run.steps // 10))
+    trainer = [
+        "uv", "run", "--extra", "cuda", "--extra", "tracking",
+        "python", "examples/train_tiny_spikegpt.py",
+        "--device", "cuda", "--compile", "regional", "--compile-mode", "default",
+        "--matmul-precision", "high", "--amp", "bf16",
+        "--train-bin", corpus_path, "--vocab", "bpe",
+        "--val-holdout-tokens", str(spec["val_holdout_tokens"]),
+        "--val-eval", "strided", "--val-eval-tokens", "2000000",
+        "--context-length", str(spec["context_length"]),
+        "--layers", str(spec["layers"]), "--embedding", str(spec["embedding"]),
+        "--model-type", "rwkv", "--batch", str(spec["batch"]), "--steps", str(run.steps),
+        "--lr", f"{spec['lr']:g}", "--lr-final", f"{run.lr_final:g}",
+        "--lr-schedule", "cosine", "--warmup-steps", str(run.warmup_steps),
+        "--weight-decay", f"{spec['weight_decay']:g}", "--dropout", f"{spec['dropout']:g}",
+        "--grad-clip", "1.0", "--log-every", "100", "--eval-every", "1000",
+        "--checkpoint-out", f"runs/{run.name}.ckpt", "--checkpoint-every", str(ckpt_every),
+        "--best-checkpoint-out", f"runs/{run.name}.best.pt",
+        "--wandb", "--wandb-project", spec["wandb_project"], "--wandb-run-name", run.name,
+    ]
+    if run.activation_checkpointing:
+        trainer.append("--activation-checkpointing")
+    return trainer
+
+
+_BUILDERS = {"modal": modal_command, "lambda": lambda_command, "local": local_command}
+
+
+def _build(run: PlannedRun, args: argparse.Namespace) -> list[str]:
+    if args.backend == "local":
+        return local_command(run, corpus=args.corpus)
+    return _BUILDERS[args.backend](run)
+
+
 def cmd_emit(runs: list[PlannedRun], args: argparse.Namespace) -> None:
-    build = modal_command if args.backend == "modal" else lambda_command
     for run in runs:
-        print(shlex.join(build(run)))
+        print(shlex.join(_build(run, args)))
 
 
 def cmd_launch(runs: list[PlannedRun], args: argparse.Namespace) -> None:
-    if args.backend != "modal":
+    if args.backend not in ("modal", "local"):
         raise SystemExit(
-            "launch supports --backend modal only (lambda runs are blocking one-shots; "
+            "launch supports --backend modal|local only (lambda runs are blocking one-shots; "
             "use `emit --backend lambda` and run them yourself)"
         )
     if not args.yes:
-        raise SystemExit(f"would launch {len(runs)} paid Modal runs; re-run with --yes")
+        kind = "paid Modal" if args.backend == "modal" else "local 5090"
+        raise SystemExit(f"would launch {len(runs)} {kind} runs; re-run with --yes")
+    # local runs share this box's GPU: sequential, entity pinned to pitheta, and
+    # a failed run doesn't abort the fleet (the rest still yield isoFLOP points).
+    env = os.environ.copy()
+    if args.backend == "local":
+        env["WANDB_ENTITY"] = env.get("WANDB_ENTITY", "pitheta")
+        env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    failed = []
     for run in runs:
-        command = modal_command(run)
+        command = _build(run, args)
         print(f"launching {run.name}: {shlex.join(command)}", flush=True)
-        subprocess.run(command, check=True)
+        rc = subprocess.run(command, env=env).returncode
+        if rc != 0:
+            print(f"!!! {run.name} FAILED (rc={rc}), continuing", flush=True)
+            failed.append(run.name)
+    if failed:
+        print(f"done with failures: {failed}", flush=True)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("command", choices=("plan", "emit", "launch"))
     parser.add_argument("grid", type=Path, help="grid JSON file")
-    parser.add_argument("--backend", choices=("modal", "lambda"), default="modal")
+    parser.add_argument("--backend", choices=("modal", "lambda", "local"), default="modal")
     parser.add_argument("--filter", help="only runs whose name contains this substring")
+    parser.add_argument(
+        "--corpus",
+        help="override the corpus .bin path (local backend; e.g. a smaller prefix corpus "
+        "for the cheap shakedown tier). Defaults to the grid's cached data/<tag>.bin.",
+    )
     parser.add_argument(
         "--eff-tflops",
         type=float,

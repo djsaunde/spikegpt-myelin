@@ -42,7 +42,7 @@ while true; do
   [ -f "$CKPT" ] && resume=(--checkpoint-in "$CKPT")
   attempt=$((attempt + 1))
   echo "[resume] attempt ${attempt}: ${done_steps}/${TARGET} done, running ${remaining} more steps$([ -f "$CKPT" ] && echo " (resuming from $CKPT)")"
-  uv run python examples/train_tiny_spikegpt.py "${TRAIN_ARGS[@]}" --steps "$remaining" "${resume[@]}"
+  uv run --extra cuda --extra tracking python examples/train_tiny_spikegpt.py "${TRAIN_ARGS[@]}" --steps "$remaining" "${resume[@]}"
   rc=$?
   echo "[resume] training exited rc=${rc}"
   if [ "$(completed_steps)" -ge "$TARGET" ]; then
