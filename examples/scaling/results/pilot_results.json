@@ -1,0 +1,134 @@
+[
+  {
+    "name": "pilot_d384_lr0.0008",
+    "state": "finished",
+    "embedding": 384,
+    "layers": 10,
+    "lr": 0.0008,
+    "batch": 16,
+    "steps": 45777,
+    "val_loss": 4.022993926079042,
+    "val_perplexity": 55.868125915527344
+  },
+  {
+    "name": "pilot_d384_lr0.00105_ben",
+    "state": "finished",
+    "embedding": 384,
+    "layers": 10,
+    "lr": 0.00105,
+    "batch": 16,
+    "steps": 45777,
+    "val_loss": 4.015028070729022,
+    "val_perplexity": 55.42484664916992
+  },
+  {
+    "name": "pilot_d384_lr0.0014",
+    "state": "finished",
+    "embedding": 384,
+    "layers": 10,
+    "lr": 0.0014,
+    "batch": 16,
+    "steps": 45777,
+    "val_loss": 4.0112133395256775,
+    "val_perplexity": 55.21382141113281
+  },
+  {
+    "name": "pilot_d384_lr0.0025",
+    "state": "finished",
+    "embedding": 384,
+    "layers": 10,
+    "lr": 0.0025,
+    "batch": 16,
+    "steps": 45777,
+    "val_loss": 4.026258650661674,
+    "val_perplexity": 56.050804138183594
+  },
+  {
+    "name": "pilot_d512_lr0.0006",
+    "state": "finished",
+    "embedding": 512,
+    "layers": 12,
+    "lr": 0.0006,
+    "batch": 16,
+    "steps": 45777,
+    "val_loss": 3.8703695961407254,
+    "val_perplexity": 47.960113525390625
+  },
+  {
+    "name": "pilot_d512_lr0.0011",
+    "state": "finished",
+    "embedding": 512,
+    "layers": 12,
+    "lr": 0.0011,
+    "batch": 16,
+    "steps": 45777,
+    "val_loss": 3.85885077391413,
+    "val_perplexity": 47.410831451416016
+  },
+  {
+    "name": "pilot_d512_lr0.0020",
+    "state": "finished",
+    "embedding": 512,
+    "layers": 12,
+    "lr": 0.002,
+    "batch": 16,
+    "steps": 45777,
+    "val_loss": 3.918233727468812,
+    "val_perplexity": 50.31149673461914
+  },
+  {
+    "name": "pilot_d768_lr0.00016",
+    "state": "finished",
+    "embedding": 768,
+    "layers": 18,
+    "lr": 0.00016,
+    "batch": 16,
+    "steps": 45777,
+    "val_loss": 3.7899503155329626,
+    "val_perplexity": 44.25420379638672
+  },
+  {
+    "name": "pilot_d768_lr0.0003",
+    "state": "finished",
+    "embedding": 768,
+    "layers": 18,
+    "lr": 0.0003,
+    "batch": 16,
+    "steps": 45777,
+    "val_loss": 3.700839155860516,
+    "val_perplexity": 40.48125457763672
+  },
+  {
+    "name": "pilot_d768_lr0.0004",
+    "state": "finished",
+    "embedding": 768,
+    "layers": 18,
+    "lr": 0.0004,
+    "batch": 16,
+    "steps": 45777,
+    "val_loss": 3.723364695448846,
+    "val_perplexity": 41.403465270996094
+  },
+  {
+    "name": "pilot_d768_lr0.00075",
+    "state": "finished",
+    "embedding": 768,
+    "layers": 18,
+    "lr": 0.00075,
+    "batch": 16,
+    "steps": 45777,
+    "val_loss": 3.7743282489635,
+    "val_perplexity": 43.56822967529297
+  },
+  {
+    "name": "pilot_d768_lr0.0014",
+    "state": "finished",
+    "embedding": 768,
+    "layers": 18,
+    "lr": 0.0014,
+    "batch": 16,
+    "steps": 45777,
+    "val_loss": 3.84412378116992,
+    "val_perplexity": 46.717735290527344
+  }
+]
