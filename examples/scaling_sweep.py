@@ -116,12 +116,18 @@ def load_grid(path: Path) -> list[PlannedRun]:
     return runs
 
 
-def filter_runs(runs: list[PlannedRun], pattern: str | None) -> list[PlannedRun]:
-    if not pattern:
-        return runs
-    kept = [run for run in runs if pattern in run.name]
+def filter_runs(
+    runs: list[PlannedRun], pattern: str | None, max_embedding: int | None = None
+) -> list[PlannedRun]:
+    kept = runs
+    if pattern:
+        kept = [run for run in kept if pattern in run.name]
+    if max_embedding is not None:
+        # VRAM gate: on the 32GB 5090, batch-16 fits d<=768; d>=1024 needs a bigger
+        # GPU / batch-8 / checkpointing. --max-embedding 768 keeps only what fits.
+        kept = [run for run in kept if run.spec["embedding"] <= max_embedding]
     if not kept:
-        raise SystemExit(f"--filter {pattern!r} matched no runs")
+        raise SystemExit(f"--filter {pattern!r} / --max-embedding {max_embedding} matched no runs")
     return kept
 
 
@@ -256,20 +262,17 @@ def lambda_command(run: PlannedRun) -> list[str]:
     return ["python3", "lambda/run.py", "run", "--name", run.name, "--", *trainer]
 
 
-def local_command(run: PlannedRun, corpus: str | None = None) -> list[str]:
-    """One-GPU local run on this box (the RTX 5090), matching the pilot recipe.
+def _local_trainer_flags(run: PlannedRun, corpus: str | None) -> list[str]:
+    """train_tiny_spikegpt.py flags (no launcher/--steps) for a local 5090 run.
 
     batch-16, bf16, regional/default compile; in-loop eval capped to 2M tokens
-    (the eval-cost guard); periodic --checkpoint-out so a crash can be resumed via
-    examples/run_with_resume.sh. Corpus defaults to the grid's cached .bin but can
-    be overridden (e.g. a smaller prefix corpus for the cheap shakedown tier).
+    (the eval-cost guard); periodic --checkpoint-out so an interrupted run resumes.
+    Corpus defaults to the grid's cached .bin; override for e.g. a shakedown prefix.
     """
     spec = run.spec
     corpus_path = corpus or f"data/{spec['dataset']}_{spec['hf_config']}_{spec['corpus_tokens']}.bin"
     ckpt_every = min(2000, max(500, run.steps // 10))
-    trainer = [
-        "uv", "run", "--extra", "cuda", "--extra", "tracking",
-        "python", "examples/train_tiny_spikegpt.py",
+    flags = [
         "--device", "cuda", "--compile", "regional", "--compile-mode", "default",
         "--matmul-precision", "high", "--amp", "bf16",
         "--train-bin", corpus_path, "--vocab", "bpe",
@@ -277,7 +280,7 @@ def local_command(run: PlannedRun, corpus: str | None = None) -> list[str]:
         "--val-eval", "strided", "--val-eval-tokens", "2000000",
         "--context-length", str(spec["context_length"]),
         "--layers", str(spec["layers"]), "--embedding", str(spec["embedding"]),
-        "--model-type", "rwkv", "--batch", str(spec["batch"]), "--steps", str(run.steps),
+        "--model-type", "rwkv", "--batch", str(spec["batch"]),
         "--lr", f"{spec['lr']:g}", "--lr-final", f"{run.lr_final:g}",
         "--lr-schedule", "cosine", "--warmup-steps", str(run.warmup_steps),
         "--weight-decay", f"{spec['weight_decay']:g}", "--dropout", f"{spec['dropout']:g}",
@@ -287,8 +290,28 @@ def local_command(run: PlannedRun, corpus: str | None = None) -> list[str]:
         "--wandb", "--wandb-project", spec["wandb_project"], "--wandb-run-name", run.name,
     ]
     if run.activation_checkpointing:
-        trainer.append("--activation-checkpointing")
-    return trainer
+        flags.append("--activation-checkpointing")
+    return flags
+
+
+def local_command(run: PlannedRun, corpus: str | None = None, resume: bool = True) -> list[str]:
+    """One-GPU local run on this box (the RTX 5090).
+
+    resume=True (default) wraps the run in examples/run_with_resume.sh: a crash,
+    reboot, or manual pause relaunches from the last --checkpoint-out instead of
+    restarting, with the LR-schedule horizon held fixed. The wrapper injects the
+    `uv run ... train_tiny_spikegpt.py` prefix, --steps, and --checkpoint-in, so we
+    pass only the flags (with --checkpoint-out, without --steps). resume=False runs
+    the trainer directly.
+    """
+    flags = _local_trainer_flags(run, corpus)
+    if resume:
+        return ["bash", "examples/run_with_resume.sh", str(run.steps),
+                f"runs/{run.name}.ckpt", "--", *flags]
+    return [
+        "uv", "run", "--extra", "cuda", "--extra", "tracking",
+        "python", "examples/train_tiny_spikegpt.py", "--steps", str(run.steps), *flags,
+    ]
 
 
 _BUILDERS = {"modal": modal_command, "lambda": lambda_command, "local": local_command}
@@ -296,7 +319,7 @@ _BUILDERS = {"modal": modal_command, "lambda": lambda_command, "local": local_co
 
 def _build(run: PlannedRun, args: argparse.Namespace) -> list[str]:
     if args.backend == "local":
-        return local_command(run, corpus=args.corpus)
+        return local_command(run, corpus=args.corpus, resume=not args.no_resume)
     return _BUILDERS[args.backend](run)
 
 
@@ -352,9 +375,18 @@ def main() -> None:
     )
     parser.add_argument("--usd-per-hour", type=float, default=3.95, help="GPU $/h (Modal H100)")
     parser.add_argument("--yes", action="store_true", help="confirm paid launches")
+    parser.add_argument(
+        "--max-embedding", type=int,
+        help="skip runs wider than this (VRAM gate; the 32GB 5090 fits d<=768 at batch-16)",
+    )
+    parser.add_argument(
+        "--no-resume", action="store_true",
+        help="local backend: run the trainer directly instead of wrapping in "
+        "run_with_resume.sh (default wraps, so an interrupted run auto-resumes)",
+    )
     args = parser.parse_args()
 
-    runs = filter_runs(load_grid(args.grid), args.filter)
+    runs = filter_runs(load_grid(args.grid), args.filter, args.max_embedding)
     if args.command == "plan":
         cmd_plan(runs, args)
     elif args.command == "emit":
