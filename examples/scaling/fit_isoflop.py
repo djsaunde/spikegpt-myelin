@@ -52,6 +52,9 @@ def pull(entity: str, project: str) -> list[dict]:
             "name": name, "embedding": d, "layers": L, "N": counts.non_vocab,
             "D": float(D), "C": training_flops(counts, int(D)), "val_loss": float(vl),
             "steps": s.get("_step", 0), "id": r.id,
+            # SpikeGPT-specific: final spike rates (fraction of neurons firing).
+            "emb_spike": s.get("train/embedding_spike_rate"),
+            "block_spike": s.get("train/mean_block_spike_rate"),
         }
         if name in best:
             dups.add(name)
