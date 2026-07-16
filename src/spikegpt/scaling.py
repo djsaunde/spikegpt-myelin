@@ -41,6 +41,10 @@ class SpikeGPTParamCounts:
     block_matmul: int
     block_other: int
     ln_out: int
+    # "vanilla" is matmul-parameter-identical but adds a quadratic FLOP term that
+    # scales with context, so context_length must be recorded. See flops_per_token.
+    attention: str = "rwkv"
+    context_length: int | None = None
 
     @property
     def total(self) -> int:
@@ -66,16 +70,28 @@ def count_spikegpt_params(
     n_layer: int,
     n_embd: int,
     model_type: str = "rwkv",
+    attention: str = "rwkv",
+    context_length: int | None = None,
 ) -> SpikeGPTParamCounts:
-    """Exact parameter counts for a ``SpikeLanguageModel`` of these dimensions."""
+    """Exact parameter counts for a ``SpikeLanguageModel`` of these dimensions.
+
+    ``attention="vanilla"`` swaps the RWKV time-mix for causal softmax attention: both
+    are 4*C^2, so matmul parameters are identical and only RWKV's 5*C time-mix vectors
+    per layer differ. ``context_length`` is unused for parameters but recorded so
+    ``flops_per_token`` can price attention's quadratic term.
+    """
     if model_type not in ("rwkv", "rwkv-ffn-pre"):
         raise ValueError("model_type must be 'rwkv' or 'rwkv-ffn-pre'")
+    if attention not in ("rwkv", "vanilla"):
+        raise ValueError("attention must be 'rwkv' or 'vanilla'")
     c = n_embd
     n_time_mix = n_layer if model_type == "rwkv" else n_layer - 1
     n_channel_mix = n_layer if model_type == "rwkv" else n_layer + 1
     block_matmul = n_time_mix * 4 * c * c + n_channel_mix * 9 * c * c
     # Mixing vectors (time-mix 5C, channel-mix 2C), ln1+ln2 per block, ln0 on layer 0.
-    block_other = n_time_mix * 5 * c + n_channel_mix * 2 * c + n_layer * 4 * c + 2 * c
+    # Vanilla attention carries no time-mix vectors (and RoPE adds no parameters).
+    time_mix_vectors = 0 if attention == "vanilla" else n_time_mix * 5 * c
+    block_other = time_mix_vectors + n_channel_mix * 2 * c + n_layer * 4 * c + 2 * c
     return SpikeGPTParamCounts(
         vocab_size=vocab_size,
         n_layer=n_layer,
@@ -86,12 +102,33 @@ def count_spikegpt_params(
         block_matmul=block_matmul,
         block_other=block_other,
         ln_out=2 * c,
+        attention=attention,
+        context_length=context_length,
     )
 
 
+def attention_flops_per_token(counts: SpikeGPTParamCounts, *, backward: bool = True) -> int:
+    """FLOPs/token from attention's quadratic QK^T and AV products (0 for RWKV).
+
+    Activation-activation matmuls, so they scale with context, not parameters -- the
+    ``6*N*D`` approximation misses them. 4*T*C per token per layer forward, ~3x for
+    backward. RWKV's recurrence has no such cost, so an isoFLOP comparison ignoring
+    this would hand the attention arm ~16-20% free compute at ctx 1024.
+    """
+    if counts.attention != "vanilla":
+        return 0
+    if counts.context_length is None:
+        raise ValueError("context_length is required to price attention FLOPs")
+    n_attn_layers = counts.n_layer if counts.model_type == "rwkv" else counts.n_layer - 1
+    return (12 if backward else 4) * n_attn_layers * counts.context_length * counts.n_embd
+
+
 def flops_per_token(counts: SpikeGPTParamCounts, *, backward: bool = True) -> int:
-    """Matmul FLOPs per token (2*MAC), forward or forward+backward."""
-    return (6 if backward else 2) * counts.flop_matmul
+    """FLOPs per token (2*MAC): weight matmuls, plus attention's quadratic term when
+    attention="vanilla". Exactly ``6*N_flop`` for RWKV (its recurrence is elementwise)."""
+    return (6 if backward else 2) * counts.flop_matmul + attention_flops_per_token(
+        counts, backward=backward
+    )
 
 
 def training_flops(counts: SpikeGPTParamCounts, tokens: int) -> int:

@@ -216,6 +216,20 @@ def main() -> None:
         default="rwkv",
         help="SpikeGPT block variant for fresh runs; checkpoints keep their saved model type",
     )
+    parser.add_argument(
+        "--attention",
+        choices=("rwkv", "vanilla"),
+        default="rwkv",
+        help="token mixer: 'rwkv' (linear WKV recurrence) or 'vanilla' (quadratic softmax "
+        "attention + RoPE, ~GPT-2). Parameter-matched; vanilla costs extra context-scaled "
+        "FLOPs (priced by spikegpt.scaling). Independent of --no-spiking.",
+    )
+    parser.add_argument(
+        "--n-head",
+        type=int,
+        default=8,
+        help="attention heads for --attention vanilla; must divide --embedding",
+    )
     parser.add_argument("--batch", type=int, default=16)
     parser.add_argument("--steps", type=int, default=50)
     parser.add_argument("--lr", type=float, default=3e-3)
@@ -453,6 +467,8 @@ def main() -> None:
                 n_embd=args.embedding,
                 dropout=args.dropout,
                 model_type=args.model_type,
+                attention=args.attention,
+                n_head=args.n_head,
                 lif_threshold=args.lif_threshold,
                 spike_embedding=spike_embedding,
                 spiking=spiking,
@@ -465,6 +481,8 @@ def main() -> None:
                 vocab_size=vocabulary.size,
                 dropout=args.dropout,
                 model_type=args.model_type,
+                attention=args.attention,
+                n_head=args.n_head,
                 lif_threshold=args.lif_threshold,
                 spike_embedding=spike_embedding,
                 spiking=spiking,
@@ -547,6 +565,7 @@ def main() -> None:
         f"device:{args.device},compile:{compile_model},compile_policy:{args.compile},"
         f"compile_mode:{args.compile_mode},"
         f"vocab:{actual_vocab},preset:{args.preset},model_type:{config.model_type},"
+        f"attention:{config.attention},n_head:{config.n_head},"
         f"context_length:{config.context_length},layers:{config.n_layer},"
         f"embedding:{config.n_embd},"
         f"batch:{args.batch},steps:{args.steps},lr:{args.lr},"
@@ -627,6 +646,8 @@ def main() -> None:
             "vocab": actual_vocab,
             "preset": args.preset,
             "model_type": config.model_type,
+            "attention": config.attention,
+            "n_head": config.n_head,
             "context_length": config.context_length,
             "layers": config.n_layer,
             "embedding": config.n_embd,
@@ -666,6 +687,8 @@ def main() -> None:
                 "vocab": actual_vocab,
                 "preset": args.preset,
                 "model_type": config.model_type,
+                "attention": config.attention,
+                "n_head": config.n_head,
                 "steps": args.steps,
                 "previous_steps": steps_completed,
                 "total_steps": total_steps,

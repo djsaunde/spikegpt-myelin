@@ -44,6 +44,9 @@ _SURROGATE_NAME_BY_FN: dict[SurrogateFn, SurrogateName] = {
 }
 
 SpikeGPTModelType = Literal["rwkv", "rwkv-ffn-pre"]
+# Token mixer for the block's ``att`` slot: linear WKV recurrence, or quadratic
+# softmax attention (~GPT-2). Orthogonal to ``spiking`` -> a 2x2 ablation.
+AttentionKind = Literal["rwkv", "vanilla"]
 SpikeGPTPreset = Literal["micro", "tiny", "small", "base", "gpt2-216m"]
 SamplingMode = Literal["multinomial", "greedy"]
 
@@ -187,6 +190,15 @@ class SpikeTimeMixState:
 
 
 @dataclass(frozen=True)
+class VanillaAttentionState:
+    """KV cache for one ``VanillaAttentionMix``. Unlike the RWKV state's fixed-size
+    summary, this grows with the sequence."""
+
+    keys: torch.Tensor
+    values: torch.Tensor
+
+
+@dataclass(frozen=True)
 class SpikeChannelMixState:
     """Cached previous-token state for one ``SpikeChannelMix`` module."""
 
@@ -204,7 +216,7 @@ class SpikingSequenceLIFState:
 class SpikeGPTBlockState:
     """Cached recurrent state for one ``SpikeGPTBlock``."""
 
-    time_mix: SpikeTimeMixState | None
+    time_mix: SpikeTimeMixState | VanillaAttentionState | None
     ffn_pre: SpikeChannelMixState | None
     channel_mix: SpikeChannelMixState
     lif1: SpikingSequenceLIFState
@@ -228,6 +240,9 @@ class SpikeGPTConfig:
     n_embd: int = 128
     dropout: float = 0.03
     model_type: SpikeGPTModelType = "rwkv"
+    attention: AttentionKind = "rwkv"
+    n_head: int = 8  # attention="vanilla" only; must divide n_embd
+    rope_base: float = 10000.0  # attention="vanilla" only
     lif_tau: float = 2.0
     lif_threshold: float = 1.0
     lif_reset: float = 0.0
@@ -250,6 +265,17 @@ class SpikeGPTConfig:
             raise ValueError("dropout must be in [0, 1)")
         if self.model_type not in ("rwkv", "rwkv-ffn-pre"):
             raise ValueError("model_type must be 'rwkv' or 'rwkv-ffn-pre'")
+        if self.attention not in ("rwkv", "vanilla"):
+            raise ValueError("attention must be 'rwkv' or 'vanilla'")
+        if self.attention == "vanilla":
+            if self.n_head <= 0:
+                raise ValueError("n_head must be positive")
+            if self.n_embd % self.n_head != 0:
+                raise ValueError(
+                    f"n_embd ({self.n_embd}) must be divisible by n_head ({self.n_head})"
+                )
+            if self.rope_base <= 0.0:
+                raise ValueError("rope_base must be positive")
         if self.lif_tau <= 0.0:
             raise ValueError("lif_tau must be positive")
 
@@ -279,6 +305,9 @@ def spikegpt_config_from_preset(
     vocab_size: int,
     dropout: float = 0.03,
     model_type: SpikeGPTModelType = "rwkv",
+    attention: AttentionKind = "rwkv",
+    n_head: int = 8,
+    rope_base: float = 10000.0,
     lif_tau: float = 2.0,
     lif_threshold: float = 1.0,
     lif_reset: float = 0.0,
@@ -298,6 +327,9 @@ def spikegpt_config_from_preset(
         n_embd=spec.n_embd,
         dropout=dropout,
         model_type=model_type,
+        attention=attention,
+        n_head=n_head,
+        rope_base=rope_base,
         lif_tau=lif_tau,
         lif_threshold=lif_threshold,
         lif_reset=lif_reset,
@@ -1004,6 +1036,112 @@ class SpikeTimeMix(nn.Module):
         return self.output(mixed)
 
 
+def _rope_tables(
+    context_length: int, head_dim: int, base: float
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Rotary cos/sin tables [context_length, head_dim]. Parameter-free, which is what
+    keeps the vanilla mixer parameter-matched to the RWKV one."""
+    if head_dim % 2 != 0:
+        raise ValueError(f"head_dim must be even for RoPE; got {head_dim}")
+    inv_freq = 1.0 / (base ** (torch.arange(0, head_dim, 2, dtype=torch.float32) / head_dim))
+    freqs = torch.outer(torch.arange(context_length, dtype=torch.float32), inv_freq)
+    emb = torch.cat((freqs, freqs), dim=-1)
+    return emb.cos(), emb.sin()
+
+
+def _rotate_half(x: torch.Tensor) -> torch.Tensor:
+    half = x.shape[-1] // 2
+    return torch.cat((-x[..., half:], x[..., :half]), dim=-1)
+
+
+def _apply_rope(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+    return x * cos + _rotate_half(x) * sin
+
+
+class VanillaAttentionMix(nn.Module):
+    """Causal multi-head softmax attention: the quadratic twin of ``SpikeTimeMix``.
+
+    Drop-in for the block's ``att`` slot (same forward/initial_state/step), so only the
+    mixer varies. Parameter-matched by construction: query/key/value/output are 4*C^2,
+    exactly RWKV's key/value/receptance/output, and RoPE adds none -- the arms differ
+    only by RWKV's 5*C time-mix vectors per layer. NOT FLOP-matched: the quadratic
+    QK^T/AV term is priced in ``spikegpt.scaling.flops_per_token``.
+    """
+
+    def __init__(
+        self,
+        n_embd: int,
+        n_layer: int,
+        layer_id: int,
+        *,
+        n_head: int,
+        context_length: int,
+        rope_base: float = 10000.0,
+    ) -> None:
+        super().__init__()
+        if n_embd <= 0 or n_head <= 0 or n_embd % n_head != 0:
+            raise ValueError(f"n_embd ({n_embd}) must be a positive multiple of n_head ({n_head})")
+        self.n_head = n_head
+        self.head_dim = n_embd // n_head
+        self.context_length = context_length
+        self.query = nn.Linear(n_embd, n_embd, bias=False)
+        self.key = nn.Linear(n_embd, n_embd, bias=False)
+        self.value = nn.Linear(n_embd, n_embd, bias=False)
+        self.output = nn.Linear(n_embd, n_embd, bias=False)
+        cos, sin = _rope_tables(context_length, self.head_dim, rope_base)
+        self.register_buffer("rope_cos", cos, persistent=False)
+        self.register_buffer("rope_sin", sin, persistent=False)
+
+    def _project(self, inputs: torch.Tensor) -> tuple[torch.Tensor, ...]:
+        """[B, T, C] -> three [B, H, T, head_dim] tensors."""
+        shape = (*inputs.shape[:2], self.n_head, self.head_dim)
+        return tuple(
+            proj(inputs).view(shape).transpose(1, 2) for proj in (self.query, self.key, self.value)
+        )
+
+    def _rope(self, positions: slice, dtype: torch.dtype) -> tuple[torch.Tensor, torch.Tensor]:
+        return (
+            cast(torch.Tensor, self.rope_cos)[positions].to(dtype),
+            cast(torch.Tensor, self.rope_sin)[positions].to(dtype),
+        )
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        if inputs.ndim != 3:
+            raise ValueError(f"inputs must have shape [B, T, C]; got {inputs.shape}")
+        batch, seq_len, n_embd = inputs.shape
+        if seq_len > self.context_length:
+            raise ValueError(f"sequence {seq_len} exceeds context_length {self.context_length}")
+        query, key, value = self._project(inputs)
+        cos, sin = self._rope(slice(0, seq_len), query.dtype)
+        attended = F.scaled_dot_product_attention(
+            _apply_rope(query, cos, sin), _apply_rope(key, cos, sin), value, is_causal=True
+        )
+        return self.output(attended.transpose(1, 2).reshape(batch, seq_len, n_embd))
+
+    def initial_state(
+        self, *, batch_size: int, device: torch.device, dtype: torch.dtype
+    ) -> VanillaAttentionState:
+        empty = torch.zeros((batch_size, self.n_head, 0, self.head_dim), device=device, dtype=dtype)
+        return VanillaAttentionState(keys=empty, values=empty.clone())
+
+    def step(
+        self, inputs: torch.Tensor, state: VanillaAttentionState
+    ) -> tuple[torch.Tensor, VanillaAttentionState]:
+        if inputs.ndim != 2:
+            raise ValueError(f"inputs must have shape [B, C]; got {inputs.shape}")
+        position = int(state.keys.shape[2])
+        if position >= self.context_length:
+            raise ValueError(f"KV cache full ({position} >= {self.context_length})")
+        query, key, value = self._project(inputs.unsqueeze(1))
+        cos, sin = self._rope(slice(position, position + 1), query.dtype)
+        keys = torch.cat((state.keys.to(key.dtype), _apply_rope(key, cos, sin)), dim=2)
+        values = torch.cat((state.values.to(value.dtype), value), dim=2)
+        # No mask: the lone query is the newest token and every cached key precedes it.
+        attended = F.scaled_dot_product_attention(_apply_rope(query, cos, sin), keys, values)
+        merged = attended.transpose(1, 2).reshape(inputs.shape[0], -1)
+        return self.output(merged), VanillaAttentionState(keys=keys, values=values)
+
+
 class SpikeChannelMix(nn.Module):
     """RWKV channel-mixing feed-forward block."""
 
@@ -1100,7 +1238,18 @@ class SpikeGPTBlock(nn.Module):
             self.att = None
         else:
             self.ffn_pre = None
-            self.att = SpikeTimeMix(config.n_embd, config.n_layer, layer_id)
+            self.att = (
+                VanillaAttentionMix(
+                    config.n_embd,
+                    config.n_layer,
+                    layer_id,
+                    n_head=config.n_head,
+                    context_length=config.context_length,
+                    rope_base=config.rope_base,
+                )
+                if config.attention == "vanilla"
+                else SpikeTimeMix(config.n_embd, config.n_layer, layer_id)
+            )
         self.ffn = SpikeChannelMix(config.n_embd, config.n_layer, layer_id)
 
         # spiking=False is the continuous "standard decoder" twin (ablation): the LIF
@@ -1531,6 +1680,13 @@ def spikegpt_config_from_dict(data: Mapping[str, object]) -> SpikeGPTConfig:
             SpikeGPTModelType,
             _require_str(data.get("model_type", "rwkv"), "config.model_type"),
         ),
+        # Defaults keep pre-vanilla-attention checkpoints loadable.
+        attention=cast(
+            AttentionKind,
+            _require_str(data.get("attention", "rwkv"), "config.attention"),
+        ),
+        n_head=_require_int(data.get("n_head", 8), "config.n_head"),
+        rope_base=_require_float(data.get("rope_base", 10000.0), "config.rope_base"),
         lif_tau=_require_float(data.get("lif_tau", 2.0), "config.lif_tau"),
         lif_threshold=_require_float(data.get("lif_threshold", 1.0), "config.lif_threshold"),
         lif_reset=_require_float(data.get("lif_reset", 0.0), "config.lif_reset"),

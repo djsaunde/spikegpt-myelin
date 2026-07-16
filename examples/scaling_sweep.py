@@ -50,6 +50,8 @@ RUN_DEFAULTS: dict = {
     "hf_config": "sample-100BT",
     "corpus_tokens": 25_000_000_000,
     "val_holdout_tokens": 50_000_000,
+    "attention": "rwkv",  # "vanilla" = quadratic softmax attention arm
+    "spiking": True,  # False = the continuous twin (--no-spiking)
     "activation_checkpointing": None,  # -> embedding >= 1024
     "wandb_project": "spikegpt-scaling",
     "tier_flops": None,
@@ -106,8 +108,14 @@ def load_grid(path: Path) -> list[PlannedRun]:
         missing = [field for field in REQUIRED_FIELDS if spec.get(field) is None]
         if missing:
             raise SystemExit(f"run {entry.get('name', entry)!r} missing fields: {missing}")
+        # attention/context_length matter: the vanilla arm pays a quadratic FLOP
+        # term, so its token budget at a tier is smaller than the rwkv arm's.
         counts = count_spikegpt_params(
-            vocab_size=spec["vocab_size"], n_layer=spec["layers"], n_embd=spec["embedding"]
+            vocab_size=spec["vocab_size"],
+            n_layer=spec["layers"],
+            n_embd=spec["embedding"],
+            attention=spec["attention"],
+            context_length=spec["context_length"],
         )
         runs.append(PlannedRun(spec=spec, counts=counts))
     names = [run.name for run in runs]
@@ -270,7 +278,10 @@ def _local_trainer_flags(run: PlannedRun, corpus: str | None) -> list[str]:
     Corpus defaults to the grid's cached .bin; override for e.g. a shakedown prefix.
     """
     spec = run.spec
-    corpus_path = corpus or f"data/{spec['dataset']}_{spec['hf_config']}_{spec['corpus_tokens']}.bin"
+    corpus_path = (
+        corpus
+        or f"data/{spec['dataset']}_{spec['hf_config']}_{spec['corpus_tokens']}.bin"
+    )
     ckpt_every = min(2000, max(500, run.steps // 10))
     flags = [
         "--device", "cuda", "--compile", "regional", "--compile-mode", "default",
@@ -280,7 +291,8 @@ def _local_trainer_flags(run: PlannedRun, corpus: str | None) -> list[str]:
         "--val-eval", "strided", "--val-eval-tokens", "2000000",
         "--context-length", str(spec["context_length"]),
         "--layers", str(spec["layers"]), "--embedding", str(spec["embedding"]),
-        "--model-type", "rwkv", "--batch", str(spec["batch"]),
+        "--model-type", "rwkv", "--attention", spec["attention"],
+        "--batch", str(spec["batch"]),
         "--lr", f"{spec['lr']:g}", "--lr-final", f"{run.lr_final:g}",
         "--lr-schedule", "cosine", "--warmup-steps", str(run.warmup_steps),
         "--weight-decay", f"{spec['weight_decay']:g}", "--dropout", f"{spec['dropout']:g}",
@@ -291,6 +303,8 @@ def _local_trainer_flags(run: PlannedRun, corpus: str | None) -> list[str]:
     ]
     if run.activation_checkpointing:
         flags.append("--activation-checkpointing")
+    if not spec["spiking"]:
+        flags.append("--no-spiking")
     return flags
 
 
