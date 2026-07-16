@@ -50,6 +50,7 @@ RUN_DEFAULTS: dict = {
     "hf_config": "sample-100BT",
     "corpus_tokens": 25_000_000_000,
     "val_holdout_tokens": 50_000_000,
+    "grad_accum": 1,  # >1 fits wide models on a small GPU at the same effective batch
     "attention": "rwkv",  # "vanilla" = quadratic softmax attention arm
     "spiking": True,  # False = the continuous twin (--no-spiking)
     "activation_checkpointing": None,  # -> embedding >= 1024
@@ -292,6 +293,7 @@ def _local_trainer_flags(run: PlannedRun, corpus: str | None) -> list[str]:
         "--context-length", str(spec["context_length"]),
         "--layers", str(spec["layers"]), "--embedding", str(spec["embedding"]),
         "--model-type", "rwkv", "--attention", spec["attention"],
+        "--grad-accum", str(spec["grad_accum"]),
         "--batch", str(spec["batch"]),
         "--lr", f"{spec['lr']:g}", "--lr-final", f"{run.lr_final:g}",
         "--lr-schedule", "cosine", "--warmup-steps", str(run.warmup_steps),

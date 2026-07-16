@@ -231,6 +231,15 @@ def main() -> None:
         help="attention heads for --attention vanilla; must divide --embedding",
     )
     parser.add_argument("--batch", type=int, default=16)
+    parser.add_argument(
+        "--grad-accum",
+        type=int,
+        default=1,
+        help="split each --batch into this many micro-batches, accumulating gradients "
+        "before the optimizer step. --batch stays the EFFECTIVE batch, so the step/token "
+        "budget and any batch-dependent LR calibration are unchanged; only peak "
+        "activation memory shrinks (it tracks the micro-batch). Must divide --batch.",
+    )
     parser.add_argument("--steps", type=int, default=50)
     parser.add_argument("--lr", type=float, default=3e-3)
     parser.add_argument(
@@ -417,6 +426,15 @@ def main() -> None:
     )
     add_wandb_args(parser)
     args = parser.parse_args()
+
+    if args.grad_accum < 1:
+        parser.error("--grad-accum must be >= 1")
+    if args.batch % args.grad_accum != 0:
+        parser.error(
+            f"--batch ({args.batch}) must be divisible by --grad-accum ({args.grad_accum})"
+        )
+    # Peak activation memory tracks this; the optimizer still sees --batch.
+    micro_batch = args.batch // args.grad_accum
 
     torch.manual_seed(args.seed)
     configure_matmul_precision(args.matmul_precision)
@@ -726,7 +744,7 @@ def main() -> None:
         if compile_model and args.compile_warmup:
             warmup_inputs, warmup_targets = sample_token_batch(
                 train_tokens,
-                batch_size=args.batch,
+                batch_size=micro_batch,
                 context_length=config.context_length,
                 device=args.device,
             )
@@ -790,10 +808,19 @@ def main() -> None:
                 torch.cuda.synchronize(torch_device)
             start = time.perf_counter()
             optimizer.zero_grad(set_to_none=True)
-            mark_compiled_invocation_boundary(compile_model)
-            with amp_context():
-                loss, _logits = model(inputs, targets)
-            loss.backward()
+            # Accumulate over micro-batches: each one's activations are freed after its
+            # backward, so peak memory tracks micro_batch while the step still sees the
+            # full effective batch. The loss is mean-reduced and the micro-batches are
+            # equal-sized, so summing grads of loss/grad_accum reproduces the full-batch
+            # gradient exactly -- the LR calibration (batch-dependent) still holds.
+            loss_value = 0.0
+            for micro_start in range(0, args.batch, micro_batch):
+                micro_slice = slice(micro_start, micro_start + micro_batch)
+                mark_compiled_invocation_boundary(compile_model)
+                with amp_context():
+                    loss, _logits = model(inputs[micro_slice], targets[micro_slice])
+                (loss / args.grad_accum).backward()
+                loss_value += float(loss.detach()) / args.grad_accum
             grad_norm = clip_gradients(model, args.grad_clip)
             optimizer.step()
             if torch_device.type == "cuda":
@@ -842,7 +869,7 @@ def main() -> None:
                 emb_rate_str = "" if rates is None else f"{rates['embedding']:.4f}"
                 block_rate_str = "" if mean_block_rate is None else f"{mean_block_rate:.4f}"
                 print(
-                    f"| {global_step} | {float(loss.detach()):.6f} | "
+                    f"| {global_step} | {loss_value:.6f} | "
                     f"{'' if eval_metrics is None else f'{eval_metrics.loss:.6f}'} | "
                     f"{'' if eval_metrics is None else f'{eval_metrics.bits_per_character:.4f}'} | "
                     f"{'' if eval_metrics is None else f'{eval_metrics.perplexity:.4f}'} | "
@@ -852,7 +879,7 @@ def main() -> None:
                     flush=True,
                 )
                 wandb_metrics = {
-                    "train/loss": float(loss.detach()),
+                    "train/loss": loss_value,
                     "train/step_ms": step_seconds * 1000,
                     "train/tokens_per_s": args.batch * config.context_length / step_seconds,
                     "train/lr": optimizer.param_groups[0]["lr"],

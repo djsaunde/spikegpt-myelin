@@ -74,7 +74,9 @@
       "embedding": 1024,
       "tokens": 514000000,
       "lr": 0.00023,
-      "tier_flops": 1e+18
+      "tier_flops": 1e+18,
+      "grad_accum": 4,
+      "activation_checkpointing": false
     },
     {
       "name": "c3e18_512d",
@@ -106,7 +108,9 @@
       "embedding": 1024,
       "tokens": 1543000000,
       "lr": 0.00023,
-      "tier_flops": 3e+18
+      "tier_flops": 3e+18,
+      "grad_accum": 4,
+      "activation_checkpointing": false
     },
     {
       "name": "c3e18_1280d",
@@ -114,7 +118,9 @@
       "embedding": 1280,
       "tokens": 869000000,
       "lr": 0.00015,
-      "tier_flops": 3e+18
+      "tier_flops": 3e+18,
+      "grad_accum": 4,
+      "activation_checkpointing": false
     },
     {
       "name": "c1e19_640d",
@@ -138,7 +144,9 @@
       "embedding": 1024,
       "tokens": 5142000000,
       "lr": 0.00023,
-      "tier_flops": 1e+19
+      "tier_flops": 1e+19,
+      "grad_accum": 4,
+      "activation_checkpointing": false
     },
     {
       "name": "c1e19_1280d",
@@ -146,7 +154,9 @@
       "embedding": 1280,
       "tokens": 2896000000,
       "lr": 0.00015,
-      "tier_flops": 1e+19
+      "tier_flops": 1e+19,
+      "grad_accum": 4,
+      "activation_checkpointing": false
     }
   ]
 }
