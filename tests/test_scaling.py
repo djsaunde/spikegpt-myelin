@@ -9,6 +9,7 @@ from torch.utils.flop_counter import FlopCounterMode
 
 from spikegpt import SpikeGPTConfig, SpikeLanguageModel
 from spikegpt.scaling import (
+    attention_flops_per_token,
     count_spikegpt_params,
     flops_per_token,
     tokens_for_flop_budget,
@@ -81,3 +82,52 @@ def test_tokens_for_flop_budget_round_trips() -> None:
     tokens = tokens_for_flop_budget(counts, budget)
     assert training_flops(counts, tokens) <= budget
     assert training_flops(counts, tokens + 1) > budget
+
+
+def test_vanilla_attention_is_parameter_matched_to_rwkv() -> None:
+    """The mixers differ only by RWKV's 5*C time-mix vectors per layer -- the parity
+    that makes an rwkv-vs-vanilla comparison controlled."""
+    kwargs = dict(vocab_size=50277, n_layer=12, n_embd=512)
+    rwkv = count_spikegpt_params(**kwargs, attention="rwkv")
+    vanilla = count_spikegpt_params(**kwargs, attention="vanilla", context_length=1024)
+    assert rwkv.block_matmul == vanilla.block_matmul
+    assert rwkv.flop_matmul == vanilla.flop_matmul
+    assert rwkv.total - vanilla.total == 12 * 5 * 512
+
+
+def test_vanilla_attention_adds_quadratic_flops() -> None:
+    """Attention's QK^T/AV term must be priced (12*L*T*C/token fwd+bwd) or the isoFLOP
+    comparison hands the attention arm ~16-20% free compute."""
+    counts = count_spikegpt_params(
+        vocab_size=50277, n_layer=12, n_embd=512, attention="vanilla", context_length=1024
+    )
+    expected_attn = 12 * 12 * 1024 * 512
+    assert attention_flops_per_token(counts) == expected_attn
+    assert flops_per_token(counts) == 6 * counts.flop_matmul + expected_attn
+    # forward-only is a third of fwd+bwd
+    assert attention_flops_per_token(counts, backward=False) == 4 * 12 * 1024 * 512
+
+    rwkv = count_spikegpt_params(vocab_size=50277, n_layer=12, n_embd=512)
+    assert attention_flops_per_token(rwkv) == 0
+    assert flops_per_token(rwkv) == 6 * rwkv.flop_matmul  # unchanged for RWKV
+
+
+def test_vanilla_attention_flops_need_context_length() -> None:
+    """Must fail loudly: silently defaulting would rig the isoFLOP fit."""
+    counts = count_spikegpt_params(
+        vocab_size=50277, n_layer=12, n_embd=512, attention="vanilla", context_length=None
+    )
+    with pytest.raises(ValueError, match="context_length is required"):
+        flops_per_token(counts)
+
+
+def test_vanilla_attention_param_count_matches_model() -> None:
+    """Closed-form counts equal the instantiated vanilla model."""
+    config = SpikeGPTConfig(
+        vocab_size=256, context_length=32, n_layer=3, n_embd=64, attention="vanilla", n_head=4
+    )
+    model = SpikeLanguageModel(config)
+    counts = count_spikegpt_params(
+        vocab_size=256, n_layer=3, n_embd=64, attention="vanilla", context_length=32
+    )
+    assert counts.total == sum(p.numel() for p in model.parameters())
