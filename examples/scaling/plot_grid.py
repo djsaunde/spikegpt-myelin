@@ -34,6 +34,7 @@ def main() -> None:
 
     fig, (axA, axB, axC) = plt.subplots(1, 3, figsize=(15.5, 5.0))
     frontier = []  # (C, N_opt, D_opt)
+    opt_pts = []  # (N_opt, loss at the optimum) — traces the compute-optimal trajectory
 
     # ---- A: isoFLOP parabolas per tier ----
     for cf in sorted(tiers, key=float):
@@ -49,10 +50,33 @@ def main() -> None:
             axA.plot(xs / 1e6, a2 * np.log(xs) ** 2 + a1 * np.log(xs) + a0, "-", color=col, lw=1.8)
             logNo, interior = _vertex(np.log(N), L)
             No = math.exp(logNo)
-            axA.plot(No / 1e6, a2 * logNo ** 2 + a1 * logNo + a0, "*", ms=15, color=col,
-                     mec="white", mew=1.0, zorder=5)
+            Lo = a2 * logNo ** 2 + a1 * logNo + a0
+            axA.plot(No / 1e6, Lo, "*", ms=15, color=col, mec="white", mew=1.0, zorder=5)
             if interior:
                 frontier.append((float(cf), No, float(cf) / (6 * No)))
+                opt_pts.append((No, Lo))
+
+    # The compute-optimal trajectory: the path the sweet spot traces as compute grows.
+    # This is the scaling law projected onto (N, loss). Dashed beyond the measured
+    # optima = a prediction the remaining tiers will test. Kept short: extrapolating a
+    # straight line here forever would eventually cross the irreducible loss floor.
+    if len(opt_pts) >= 2:
+        op = sorted(opt_pts)
+        sl, ic = np.polyfit(np.log([p[0] for p in op]), [p[1] for p in op], 1)
+        meas = np.logspace(math.log10(op[0][0]), math.log10(op[-1][0]), 30)
+        # Extrapolate only as far as the next tier's predicted optimum — a straight
+        # line in (log N, loss) has no irreducible-loss floor, so a long extension
+        # would be dishonest (and would squash the measured parabolas off-scale).
+        pred = np.logspace(math.log10(op[-1][0]), math.log10(2.0e8), 30)
+        axA.plot(meas / 1e6, sl * np.log(meas) + ic, "-", color="#666", lw=1.8, zorder=3,
+                 label=f"compute-optimal path ({len(op)} tiers)")
+        axA.plot(pred / 1e6, sl * np.log(pred) + ic, ":", color="#666", lw=1.8, zorder=3,
+                 label="→ preliminary extrapolation")
+        axA.axvline(138, ls="-", color="#c0392b", lw=1.1, alpha=.5)
+        axA.annotate("d768 = local VRAM ceiling →\npredicted optima lie beyond it",
+                     (138, 3.97), fontsize=7.8, color="#c0392b", ha="right", va="top",
+                     xytext=(-5, 0), textcoords="offset points")
+    axA.set_ylim(3.15, 4.0)
     axA.set_xscale("log")
     axA.set_xlabel("model size  N  (non-embedding params, M)")
     axA.set_ylabel("final val loss  (nats/token)")
