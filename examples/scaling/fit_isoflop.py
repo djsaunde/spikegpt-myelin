@@ -11,9 +11,19 @@ data: reports whatever tiers are complete enough.
 
     uv run --extra tracking python examples/scaling/fit_isoflop.py
 
-N = non-vocab params (spikegpt.scaling.non_vocab). Dedup: for each run name keeps
-the finished run with the most logged steps; a crashed/partial run is dropped and
-a leftover duplicate is warned about.
+N = TOTAL params including embedding (the Chinchilla convention). Kaplan's
+non-embedding counting is the documented cause of his inflated N_opt ~ C^0.73:
+at small scale with a large vocab it biases the exponent upward (Pearce & Song
+2024, arXiv:2406.12907). Our regime is exactly that — a 50,277 vocab makes the
+embedding tables 36-67% of these models — so total params is the defensible and
+comparable choice; the non-embedding exponent is printed only as a diagnostic.
+
+This does not disturb the FLOP accounting: the isoFLOP method locates the
+loss-minimising N at each *measured* compute, so the N reported here never has to
+match the N inside C = 6*N_flop*D.
+
+Dedup: for each run name keeps the finished run with the most logged steps; a
+crashed/partial run is dropped and a leftover duplicate is warned about.
 """
 
 from __future__ import annotations
@@ -49,7 +59,13 @@ def pull(entity: str, project: str) -> list[dict]:
         steps_total = c.get("total_steps") or tok
         D = steps_total * c.get("batch", 16) * c.get("context_length", 1024)
         row = {
-            "name": name, "embedding": d, "layers": L, "N": counts.non_vocab,
+            # N = TOTAL params incl. embedding — the Chinchilla convention. Kaplan's
+            # non-embedding counting is the documented cause of his inflated C^0.73
+            # (Pearce & Song 2024, arXiv:2406.12907): at small scale with a large
+            # vocab it biases the exponent upward. Our regime is exactly that, so we
+            # report `N` as total and keep non_vocab only as a diagnostic.
+            "name": name, "embedding": d, "layers": L,
+            "N": counts.total, "N_nonvocab": counts.non_vocab,
             "D": float(D), "C": training_flops(counts, int(D)), "val_loss": float(vl),
             "steps": s.get("_step", 0), "id": r.id,
             # SpikeGPT-specific: final spike rates (fraction of neurons firing).
@@ -120,7 +136,26 @@ def main() -> None:
     a, _ = np.polyfit(np.log(C), np.log(No), 1)
     b, _ = np.polyfit(np.log(C), np.log(Do), 1)
     print(f"COMPUTE-OPTIMAL FRONTIER ({len(frontier)} tiers):")
-    print(f"  N_opt(C) ~ C^{a:.3f}   D_opt(C) ~ C^{b:.3f}   (Chinchilla: ~0.5 / ~0.5)")
+    print(f"  N_opt(C) ~ C^{a:.3f}   D_opt(C) ~ C^{b:.3f}   [N = total params, Chinchilla "
+          f"convention; Chinchilla measured ~0.5 / ~0.5]")
+
+    # Diagnostic only: the same fit under Kaplan's non-embedding convention. Expect
+    # this to read HIGHER — that upward bias at small scale is exactly what Pearce &
+    # Song (2024) identify as the cause of Kaplan's C^0.73. Do not report it as the result.
+    kf = []
+    for cflops in sorted(tiers, key=float):
+        ts = sorted(tiers[cflops], key=lambda r: r["N_nonvocab"])
+        if len(ts) < 3:
+            continue
+        nv = np.array([t["N_nonvocab"] for t in ts], float)
+        lv = np.array([t["val_loss"] for t in ts])
+        lo, inter = _vertex(np.log(nv), lv)
+        if inter:
+            kf.append((float(cflops), np.exp(lo)))
+    if len(kf) >= 2:
+        ak = np.polyfit(np.log([f[0] for f in kf]), np.log([f[1] for f in kf]), 1)[0]
+        print(f"  (diagnostic — Kaplan/non-embedding convention: C^{ak:.3f}; biased high at "
+              f"this scale, not the headline)")
 
 
 if __name__ == "__main__":

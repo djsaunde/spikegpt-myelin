@@ -67,25 +67,24 @@ def main() -> None:
         # Extrapolate only as far as the next tier's predicted optimum — a straight
         # line in (log N, loss) has no irreducible-loss floor, so a long extension
         # would be dishonest (and would squash the measured parabolas off-scale).
-        pred = np.logspace(math.log10(op[-1][0]), math.log10(2.0e8), 30)
+        pred = np.logspace(math.log10(op[-1][0]), math.log10(2.6e8), 30)
+        # restate the fit with N in millions so the intercept is readable
+        icM = ic + sl * math.log(1e6)
+        eq = f"L = {icM:.2f} − {abs(sl):.2f}·ln(N/1M)"
         axA.plot(meas / 1e6, sl * np.log(meas) + ic, "-", color="#666", lw=1.8, zorder=3,
-                 label=f"compute-optimal path ({len(op)} tiers)")
+                 label=f"compute-optimal path ({len(op)} tiers)\n{eq}")
         axA.plot(pred / 1e6, sl * np.log(pred) + ic, ":", color="#666", lw=1.8, zorder=3,
                  label="→ preliminary extrapolation")
-        axA.axvline(138, ls="-", color="#c0392b", lw=1.1, alpha=.5)
-        axA.annotate("d768 = local VRAM ceiling →\npredicted optima lie beyond it",
-                     (138, 3.97), fontsize=7.8, color="#c0392b", ha="right", va="top",
-                     xytext=(-5, 0), textcoords="offset points")
     axA.set_ylim(3.15, 4.0)
     axA.set_xscale("log")
-    axA.set_xlabel("model size  N  (non-embedding params, M)")
+    axA.set_xlabel("model size  N  (total params incl. embedding, M)")
     axA.set_ylabel("final val loss  (nats/token)")
     axA.set_title("A · isoFLOP parabolas — sweet spot per compute budget", fontsize=11, loc="left")
     axA.legend(frameon=False, fontsize=9, title="FLOP tier  (★ = optimum)")
     axA.grid(alpha=.25, which="both")
     axA.xaxis.set_minor_locator(NullLocator())
-    axA.xaxis.set_major_locator(FixedLocator([19, 41, 75, 138, 273, 512]))
-    axA.xaxis.set_major_formatter(FixedFormatter(["19", "41", "75", "138", "273", "512"]))
+    axA.xaxis.set_major_locator(FixedLocator([58, 92, 139, 215, 376, 640]))
+    axA.xaxis.set_major_formatter(FixedFormatter(["58", "92", "139", "215", "376", "640"]))
 
     # ---- B: compute-optimal frontier ----
     if len(frontier) >= 2:
@@ -127,15 +126,15 @@ def main() -> None:
     if allE:
         axC.plot(allN, allE, "s", color="#999", ms=6, alpha=.6, label="input embedding (~const)")
     axC.set_xscale("log")
-    axC.set_xlabel("model size  N  (non-embedding params, M)")
+    axC.set_xlabel("model size  N  (total params incl. embedding, M)")
     axC.set_ylabel("spike rate  (fraction firing)")
     axC.set_title("C · internal sparsity vs scale (novel)", fontsize=11, loc="left")
     axC.legend(frameon=False, fontsize=9, loc="center left")
     axC.grid(alpha=.25, which="both")
     axC.set_ylim(0.15, 0.55)
     axC.xaxis.set_minor_locator(NullLocator())
-    axC.xaxis.set_major_locator(FixedLocator([19, 41, 75, 138, 273, 512]))
-    axC.xaxis.set_major_formatter(FixedFormatter(["19", "41", "75", "138", "273", "512"]))
+    axC.xaxis.set_major_locator(FixedLocator([58, 92, 139, 215, 376, 640]))
+    axC.xaxis.set_major_formatter(FixedFormatter(["58", "92", "139", "215", "376", "640"]))
 
     fig.suptitle(f"SpikeGPT scaling grid — {len(rows)} runs, {len(tiers)} FLOP tiers",
                  fontsize=13.5, y=1.01)
