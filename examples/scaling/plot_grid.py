@@ -14,13 +14,13 @@ Saves runs/grid_plots.png. Pull + dedup logic is shared with fit_isoflop.py.
 import math
 from collections import defaultdict
 
-import numpy as np
 import matplotlib
+import numpy as np
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.ticker import FixedLocator, FixedFormatter, NullLocator, NullFormatter
-
-from fit_isoflop import pull, _vertex  # same directory
+from fit_isoflop import _vertex, pull  # same directory
+from matplotlib.ticker import FixedFormatter, FixedLocator, NullLocator
 
 # one colour per FLOP tier (extends as tiers are added)
 TIER_COL = {"3e+17": "#4C78A8", "1e+18": "#F58518", "3e+18": "#54A24B", "1e+19": "#E45756"}
@@ -28,6 +28,10 @@ TIER_COL = {"3e+17": "#4C78A8", "1e+18": "#F58518", "3e+18": "#54A24B", "1e+19":
 
 def main() -> None:
     rows = pull("pitheta", "spikegpt-scaling")
+    # Only the SpikeGPT baseline arm; a continuous/vanilla run at the same
+    # (N, C) is a different loss surface and must not join these parabolas.
+    # (Overlaying arms on one figure is issue #3's plotting step.)
+    rows = [r for r in rows if r.get("arm", "spiking+rwkv") == "spiking+rwkv"]
     tiers = defaultdict(list)
     for r in rows:
         tiers[f"{r['C']:.0e}"].append(r)
@@ -101,7 +105,11 @@ def main() -> None:
                  "--", color="#B0447A", lw=2, label=f"D_opt ∝ C^{aD:.2f}  (÷10³, B tok)")
         axB.plot(C, Do / 1e9, "s", ms=10, color="#B0447A", mec="white", mew=1.4, zorder=4)
         axB.set_yscale("log")
-        note = "2 tiers — exact fit, firms up with more" if len(frontier) == 2 else f"{len(frontier)} tiers"
+        note = (
+            "2 tiers — exact fit, firms up with more"
+            if len(frontier) == 2
+            else f"{len(frontier)} tiers"
+        )
         axB.annotate(note, (0.5, 0.03), xycoords="axes fraction", ha="center",
                      fontsize=8.5, color="#888", style="italic")
     axB.set_xscale("log")

@@ -666,6 +666,7 @@ def main() -> None:
             "model_type": config.model_type,
             "attention": config.attention,
             "n_head": config.n_head,
+            "spiking": config.spiking,
             "context_length": config.context_length,
             "layers": config.n_layer,
             "embedding": config.n_embd,

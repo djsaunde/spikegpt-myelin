@@ -36,6 +36,15 @@ import numpy as np
 from spikegpt.scaling import count_spikegpt_params, training_flops
 
 
+def _arm(config: dict) -> str:
+    """The {spiking, mixer} ablation arm a run belongs to, e.g. 'spiking+rwkv'."""
+    spiking = config.get("spiking")
+    if spiking is None:  # pre-2026-07 runs: infer from the spike-embedding proxy
+        spiking = config.get("spike_embedding", True)
+    attention = config.get("attention") or "rwkv"
+    return f"{'spiking' if spiking else 'continuous'}+{attention}"
+
+
 def pull(entity: str, project: str) -> list[dict]:
     import wandb
 
@@ -71,6 +80,11 @@ def pull(entity: str, project: str) -> list[dict]:
             # SpikeGPT-specific: final spike rates (fraction of neurons firing).
             "emb_spike": s.get("train/embedding_spike_rate"),
             "block_spike": s.get("train/mean_block_spike_rate"),
+            # Ablation arm. `spiking` is logged since 2026-07; older runs lack it, so
+            # fall back to spike_embedding=False as the non-spiking proxy. Runs of
+            # different arms are NEVER fit together -- a continuous twin at the same
+            # (N, C) is a different loss surface, not another point on the same one.
+            "arm": _arm(c),
         }
         if name in best:
             dups.add(name)
@@ -92,6 +106,43 @@ def _vertex(x: np.ndarray, y: np.ndarray) -> tuple[float, bool]:
     return float(xo), bool(x.min() < xo < x.max())
 
 
+def fit_arm(rows: list[dict], key: str = "N") -> list[tuple[float, float, float, float]]:
+    """Per-tier parabola -> interior compute-optimal frontier for ONE arm's runs.
+
+    Returns [(C, N_opt, D_opt, L_min), ...] over tiers with an interior optimum.
+    Prints the tiers. ``key`` selects the N convention ("N" total / "N_nonvocab").
+    """
+    tiers: dict[str, list[dict]] = defaultdict(list)
+    for r in rows:
+        tiers[f"{r['C']:.0e}"].append(r)
+    frontier = []
+    for cflops in sorted(tiers, key=float):
+        ts = sorted(tiers[cflops], key=lambda r: r[key])
+        if key == "N":  # only narrate for the headline convention
+            print(f"  C = {cflops} FLOPs — widths {[t['embedding'] for t in ts]}")
+            for t in ts:
+                print(f"    d{t['embedding']:<5} N={t['N'] / 1e6:6.1f}M  "
+                      f"D={t['D'] / 1e9:6.2f}B  loss={t['val_loss']:.4f}")
+        if len(ts) < 3:
+            continue
+        N = np.array([t[key] for t in ts], float)
+        Lv = np.array([t["val_loss"] for t in ts])
+        logNopt, interior = _vertex(np.log(N), Lv)
+        Nopt, C = np.exp(logNopt), float(cflops)
+        if key == "N":
+            tag = "interior" if interior else "AT EDGE (optimum outside widths — extend)"
+            print(f"    => N_opt ~ {Nopt / 1e6:.0f}M, D_opt ~ {C / (6 * Nopt) / 1e9:.2f}B, "
+                  f"L_min <= {Lv.min():.4f}  [{tag}]")
+        if interior:
+            frontier.append((C, Nopt, C / (6 * Nopt), float(Lv.min())))
+    return frontier
+
+
+def _exponent(frontier: list[tuple], idx: int) -> float:
+    C = np.array([f[0] for f in frontier])
+    return float(np.polyfit(np.log(C), np.log([f[idx] for f in frontier]), 1)[0])
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     ap.add_argument("--entity", default="pitheta")
@@ -99,63 +150,27 @@ def main() -> None:
     args = ap.parse_args()
 
     rows = pull(args.entity, args.project)
-    tiers: dict[str, list[dict]] = defaultdict(list)
+    arms: dict[str, list[dict]] = defaultdict(list)
     for r in rows:
-        tiers[f"{r['C']:.0e}"].append(r)
+        arms[r["arm"]].append(r)
+    print(f"\n{len(rows)} finished grid runs across {len(arms)} arm(s): "
+          f"{', '.join(f'{a} ({len(rs)})' for a, rs in sorted(arms.items()))}")
 
-    print(f"\n{len(rows)} finished grid runs across {len(tiers)} FLOP tiers\n")
-    frontier = []  # (C, N_opt, D_opt, L_min)
-    for cflops in sorted(tiers, key=float):
-        ts = sorted(tiers[cflops], key=lambda r: r["N"])
-        widths = [t["embedding"] for t in ts]
-        print(f"── C = {cflops} FLOPs — widths {widths} ──")
-        for t in ts:
-            print(f"    d{t['embedding']:<5} N={t['N']/1e6:6.1f}M  D={t['D']/1e9:6.2f}B  loss={t['val_loss']:.4f}")
-        if len(ts) < 3:
-            print("    (need >=3 widths for a parabola — incomplete tier)\n")
+    # Baseline (SpikeGPT) first, then any ablation arms. Arms are never mixed:
+    # a continuous/vanilla run at the same (N, C) is a different loss surface.
+    for arm in sorted(arms, key=lambda a: (a != "spiking+rwkv", a)):
+        print(f"\n===== arm: {arm} =====")
+        frontier = fit_arm(arms[arm])
+        if len(frontier) < 2:
+            print(f"  ({len(frontier)} interior tier(s) — need >=2 for the N_opt(C) frontier)")
             continue
-        N = np.array([t["N"] for t in ts], float)
-        Lv = np.array([t["val_loss"] for t in ts])
-        logNopt, interior = _vertex(np.log(N), Lv)
-        Nopt = np.exp(logNopt)
-        C = float(cflops)
-        Dopt = C / (6 * Nopt)  # from C = 6 N D (approx; N_opt here is non-vocab)
-        Lmin = Lv.min()
-        tag = "interior" if interior else "AT EDGE (optimum outside sampled widths — extend)"
-        print(f"    => N_opt ~ {Nopt/1e6:.0f}M, D_opt ~ {Dopt/1e9:.2f}B, L_min <= {Lmin:.4f}  [{tag}]\n")
-        if interior:
-            frontier.append((C, Nopt, Dopt, Lmin))
-
-    if len(frontier) < 2:
-        print(f"Only {len(frontier)} tier(s) with an interior optimum — need >=2 to fit "
-              "the compute-optimal frontier N_opt(C). Run more tiers.")
-        return
-    C = np.array([f[0] for f in frontier])
-    No = np.array([f[1] for f in frontier])
-    Do = np.array([f[2] for f in frontier])
-    a, _ = np.polyfit(np.log(C), np.log(No), 1)
-    b, _ = np.polyfit(np.log(C), np.log(Do), 1)
-    print(f"COMPUTE-OPTIMAL FRONTIER ({len(frontier)} tiers):")
-    print(f"  N_opt(C) ~ C^{a:.3f}   D_opt(C) ~ C^{b:.3f}   [N = total params, Chinchilla "
-          f"convention; Chinchilla measured ~0.5 / ~0.5]")
-
-    # Diagnostic only: the same fit under Kaplan's non-embedding convention. Expect
-    # this to read HIGHER — that upward bias at small scale is exactly what Pearce &
-    # Song (2024) identify as the cause of Kaplan's C^0.73. Do not report it as the result.
-    kf = []
-    for cflops in sorted(tiers, key=float):
-        ts = sorted(tiers[cflops], key=lambda r: r["N_nonvocab"])
-        if len(ts) < 3:
-            continue
-        nv = np.array([t["N_nonvocab"] for t in ts], float)
-        lv = np.array([t["val_loss"] for t in ts])
-        lo, inter = _vertex(np.log(nv), lv)
-        if inter:
-            kf.append((float(cflops), np.exp(lo)))
-    if len(kf) >= 2:
-        ak = np.polyfit(np.log([f[0] for f in kf]), np.log([f[1] for f in kf]), 1)[0]
-        print(f"  (diagnostic — Kaplan/non-embedding convention: C^{ak:.3f}; biased high at "
-              f"this scale, not the headline)")
+        aN, aD = _exponent(frontier, 1), _exponent(frontier, 2)
+        print(f"  COMPUTE-OPTIMAL FRONTIER ({len(frontier)} tiers): N_opt ~ C^{aN:.3f}, "
+              f"D_opt ~ C^{aD:.3f}  [total params, Chinchilla ~0.5/0.5]")
+        kaplan = fit_arm(arms[arm], key="N_nonvocab")
+        if len(kaplan) >= 2:
+            print(f"  (diagnostic — Kaplan/non-embedding: C^{_exponent(kaplan, 1):.3f}, "
+                  "biased high at this scale)")
 
 
 if __name__ == "__main__":
