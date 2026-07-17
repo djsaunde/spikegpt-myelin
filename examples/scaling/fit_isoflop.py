@@ -98,12 +98,22 @@ def pull(entity: str, project: str) -> list[dict]:
 
 
 def _vertex(x: np.ndarray, y: np.ndarray) -> tuple[float, bool]:
-    """Log-parabola vertex of y vs x; (x_opt, interior?)."""
+    """Log-parabola vertex of y vs x; (x_opt, interior?).
+
+    "interior" requires BOTH the fitted vertex to lie inside the sampled range AND
+    the sampled minimum to not be at an endpoint. The second guard matters: a
+    monotonically-decreasing tier (loss still falling at the widest width) has its
+    true optimum at/beyond the edge, but a quadratic can curve up just past the last
+    point and place a spurious "interior" vertex on it -- pinning N_opt to the
+    largest sampled width and biasing the frontier. Such a tier needs a wider run,
+    not a fit.
+    """
     a2, a1, _ = np.polyfit(x, y, 2)
     if a2 <= 0:
         return float(x[np.argmin(y)]), False
     xo = -a1 / (2 * a2)
-    return float(xo), bool(x.min() < xo < x.max())
+    sampled_min_interior = 0 < int(np.argmin(y)) < len(y) - 1
+    return float(xo), bool(x.min() < xo < x.max()) and sampled_min_interior
 
 
 def fit_arm(rows: list[dict], key: str = "N") -> list[tuple[float, float, float, float]]:
