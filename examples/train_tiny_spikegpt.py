@@ -671,16 +671,42 @@ def main() -> None:
             "layers": config.n_layer,
             "embedding": config.n_embd,
             "batch": args.batch,
+            "grad_accum": args.grad_accum,
+            "micro_batch": args.batch // args.grad_accum,
             "steps": args.steps,
+            "seed": args.seed,
+            # LR schedule (was only logging the peak lr) -- needed to reproduce or
+            # compare runs, and to interpret the loss curve's tail.
             "lr": args.lr,
+            "lr_final": args.lr_final,
+            "lr_schedule": args.lr_schedule,
+            "warmup_steps": args.warmup_steps,
+            "decay_steps": args.decay_steps,
+            "decay_shape": args.decay_shape,
             "weight_decay": args.weight_decay,
             "dropout": config.dropout,
-            "lif_threshold": config.lif_threshold,
             "grad_clip": args.grad_clip,
+            "amp": args.amp,
+            "matmul_precision": args.matmul_precision,
+            "lif_threshold": config.lif_threshold,
+            "rope_base": config.rope_base,
             "compile_warmup": args.compile_warmup,
             "spike_embedding": config.spike_embedding,
+            "spike_input": config.spike_input,
             "activation_checkpointing": actual_activation_checkpointing,
             "vocab_size": vocabulary.size,
+            # Parameter counts (so W&B/analysis need not recompute; N for the scaling
+            # law is total incl. embedding -- the Chinchilla convention).
+            "n_params": sum(p.numel() for p in raw_model.parameters()),
+            "n_params_nonvocab": sum(p.numel() for p in raw_model.parameters())
+            - 2 * vocabulary.size * config.n_embd,
+            # Data provenance -- WHICH corpus this run trained on (was only logging the
+            # token COUNT). Essential for a scaling study to be reproducible.
+            "train_bin": "" if args.train_bin is None else str(args.train_bin),
+            "bpe_tokenizer": args.bpe_tokenizer if actual_vocab == "bpe" else "",
+            "val_holdout_tokens": args.val_holdout_tokens,
+            "val_eval": args.val_eval,
+            "val_eval_tokens": args.val_eval_tokens,
             "train_tokens": train_tokens.numel(),
             "val_tokens": val_tokens.numel(),
             "test_tokens_heldout": test_tokens.numel(),
