@@ -75,7 +75,7 @@
       "tokens": 514000000,
       "lr": 0.00023,
       "tier_flops": 1e+18,
-      "grad_accum": 4,
+      "grad_accum": 2,
       "activation_checkpointing": false
     },
     {
@@ -109,7 +109,7 @@
       "tokens": 1543000000,
       "lr": 0.00023,
       "tier_flops": 3e+18,
-      "grad_accum": 4,
+      "grad_accum": 2,
       "activation_checkpointing": false
     },
     {
@@ -145,7 +145,7 @@
       "tokens": 5142000000,
       "lr": 0.00023,
       "tier_flops": 1e+19,
-      "grad_accum": 4,
+      "grad_accum": 2,
       "activation_checkpointing": false
     },
     {
