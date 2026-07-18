@@ -43,6 +43,7 @@ from spikegpt import (
     spikegpt_config_from_preset,
     split_train_val_test,
 )
+from spikegpt.scaling import count_spikegpt_params, flops_per_token
 
 DEFAULT_TEXT = (
     "spiking neural networks trade dense activations for sparse events. "
@@ -336,6 +337,17 @@ def main() -> None:
     )
     parser.add_argument("--sample-prompt", default="spik")
     parser.add_argument("--sample-tokens", type=int, default=48)
+    parser.add_argument(
+        "--mfu-peak-tflops",
+        type=float,
+        default=209.5,
+        help=(
+            "device peak for train/mfu, in TFLOP/s. Default 209.5 = RTX 5090 dense BF16 "
+            "with FP32 accumulate (the training-relevant peak; GeForce runs FP32-accumulate "
+            "at half the FP16-accumulate rate, and we use no structured sparsity). Set the "
+            "matching dense bf16/fp32-accum peak for other hardware, or 0 to skip MFU."
+        ),
+    )
     parser.add_argument(
         "--checkpoint-in",
         type=Path,
@@ -653,6 +665,20 @@ def main() -> None:
             group["lr"] = args.lr
             group["weight_decay"] = args.weight_decay
         print("optimizer_loaded=True", flush=True)
+    # MFU accounting. fwd+bwd FLOPs/token from the study's exact matmul count (the same
+    # accounting behind C = 6*N_flop*D, incl. vanilla attention's quadratic term when
+    # applicable), so train/mfu is self-consistent with the scaling FLOPs. It's constant
+    # for a run; MFU = flops_per_tok * tokens_per_s / peak.
+    mfu_counts = count_spikegpt_params(
+        vocab_size=vocabulary.size,
+        n_layer=config.n_layer,
+        n_embd=config.n_embd,
+        model_type=config.model_type,
+        attention=config.attention,
+        context_length=config.context_length,
+    )
+    flops_per_tok = flops_per_token(mfu_counts, backward=True)
+    mfu_peak_flops = args.mfu_peak_tflops * 1e12
     wandb_run = init_wandb(
         enabled=args.wandb,
         project=args.wandb_project,
@@ -700,6 +726,9 @@ def main() -> None:
             "n_params": sum(p.numel() for p in raw_model.parameters()),
             "n_params_nonvocab": sum(p.numel() for p in raw_model.parameters())
             - 2 * vocabulary.size * config.n_embd,
+            # MFU provenance: the FLOPs/token and device peak that define train/mfu.
+            "flops_per_token": flops_per_tok,
+            "mfu_peak_tflops": args.mfu_peak_tflops,
             # Data provenance -- WHICH corpus this run trained on (was only logging the
             # token COUNT). Essential for a scaling study to be reproducible.
             "train_bin": "" if args.train_bin is None else str(args.train_bin),
@@ -905,13 +934,18 @@ def main() -> None:
                     f"{step_seconds * 1000:.3f} |",
                     flush=True,
                 )
+                toks_per_s = args.batch * config.context_length / step_seconds
+                achieved_flops = flops_per_tok * toks_per_s
                 wandb_metrics = {
                     "train/loss": loss_value,
                     "train/step_ms": step_seconds * 1000,
-                    "train/tokens_per_s": args.batch * config.context_length / step_seconds,
+                    "train/tokens_per_s": toks_per_s,
+                    "train/tflops": achieved_flops / 1e12,
                     "train/lr": optimizer.param_groups[0]["lr"],
                     "train/completion_pct": 100.0 * global_step / total_steps,
                 }
+                if mfu_peak_flops > 0:
+                    wandb_metrics["train/mfu"] = achieved_flops / mfu_peak_flops
                 if rates is not None:
                     wandb_metrics["train/embedding_spike_rate"] = rates["embedding"]
                     wandb_metrics["train/mean_block_spike_rate"] = mean_block_rate
