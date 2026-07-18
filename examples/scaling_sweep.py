@@ -274,8 +274,8 @@ def lambda_command(run: PlannedRun) -> list[str]:
 def _local_trainer_flags(run: PlannedRun, corpus: str | None) -> list[str]:
     """train_tiny_spikegpt.py flags (no launcher/--steps) for a local 5090 run.
 
-    batch-16, bf16, regional/default compile; in-loop eval capped to 2M tokens
-    (the eval-cost guard); periodic --checkpoint-out so an interrupted run resumes.
+    batch-16, bf16, regional max-autotune compile; in-loop eval capped to 2M tokens
+    every 2.5k steps (the eval-cost guard); periodic --checkpoint-out so a run resumes.
     Corpus defaults to the grid's cached .bin; override for e.g. a shakedown prefix.
     """
     spec = run.spec
@@ -285,7 +285,7 @@ def _local_trainer_flags(run: PlannedRun, corpus: str | None) -> list[str]:
     )
     ckpt_every = min(2000, max(500, run.steps // 10))
     flags = [
-        "--device", "cuda", "--compile", "regional", "--compile-mode", "default",
+        "--device", "cuda", "--compile", "regional", "--compile-mode", "max-autotune-no-cudagraphs",
         "--matmul-precision", "high", "--amp", "bf16",
         "--train-bin", corpus_path, "--vocab", "bpe",
         "--val-holdout-tokens", str(spec["val_holdout_tokens"]),
@@ -298,7 +298,7 @@ def _local_trainer_flags(run: PlannedRun, corpus: str | None) -> list[str]:
         "--lr", f"{spec['lr']:g}", "--lr-final", f"{run.lr_final:g}",
         "--lr-schedule", "cosine", "--warmup-steps", str(run.warmup_steps),
         "--weight-decay", f"{spec['weight_decay']:g}", "--dropout", f"{spec['dropout']:g}",
-        "--grad-clip", "1.0", "--log-every", "100", "--eval-every", "1000",
+        "--grad-clip", "1.0", "--log-every", "100", "--eval-every", "2500",
         "--checkpoint-out", f"runs/{run.name}.ckpt", "--checkpoint-every", str(ckpt_every),
         "--best-checkpoint-out", f"runs/{run.name}.best.pt",
         "--wandb", "--wandb-project", spec["wandb_project"], "--wandb-run-name", run.name,
