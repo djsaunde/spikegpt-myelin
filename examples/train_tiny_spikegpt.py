@@ -910,6 +910,7 @@ def main() -> None:
                     "train/step_ms": step_seconds * 1000,
                     "train/tokens_per_s": args.batch * config.context_length / step_seconds,
                     "train/lr": optimizer.param_groups[0]["lr"],
+                    "train/completion_pct": 100.0 * global_step / total_steps,
                 }
                 if rates is not None:
                     wandb_metrics["train/embedding_spike_rate"] = rates["embedding"]
