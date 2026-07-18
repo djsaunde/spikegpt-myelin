@@ -40,6 +40,7 @@ def main() -> None:
     frontier = []  # (C, N_opt, D_opt)
     opt_pts = []  # (N_opt, loss at the optimum) — traces the compute-optimal trajectory
 
+    edge_bounds = []  # (C, N_at_min) for tiers still descending — a lower bound on N_opt
     # ---- A: isoFLOP parabolas per tier ----
     for cf in sorted(tiers, key=float):
         ts = sorted(tiers[cf], key=lambda r: r["N"])
@@ -49,16 +50,26 @@ def main() -> None:
         axA.plot(N / 1e6, L, "o", ms=9, color=col, mec="white", mew=1.2, zorder=4,
                  label=f"C={cf} ({len(ts)}w)")
         if len(ts) >= 3:
-            a2, a1, a0 = np.polyfit(np.log(N), L, 2)
-            xs = np.logspace(math.log10(N.min() * 0.8), math.log10(N.max() * 1.2), 150)
-            axA.plot(xs / 1e6, a2 * np.log(xs) ** 2 + a1 * np.log(xs) + a0, "-", color=col, lw=1.8)
             logNo, interior = _vertex(np.log(N), L)
-            No = math.exp(logNo)
-            Lo = a2 * logNo ** 2 + a1 * logNo + a0
-            axA.plot(No / 1e6, Lo, "*", ms=15, color=col, mec="white", mew=1.0, zorder=5)
             if interior:
+                # A real minimum inside the sampled widths: draw the parabola + optimum star.
+                a2, a1, a0 = np.polyfit(np.log(N), L, 2)
+                xs = np.logspace(math.log10(N.min() * 0.8), math.log10(N.max() * 1.2), 150)
+                axA.plot(xs / 1e6, a2 * np.log(xs) ** 2 + a1 * np.log(xs) + a0, "-", color=col, lw=1.8)
+                No = math.exp(logNo)
+                Lo = a2 * logNo ** 2 + a1 * logNo + a0
+                axA.plot(No / 1e6, Lo, "*", ms=15, color=col, mec="white", mew=1.0, zorder=5)
                 frontier.append((float(cf), No, float(cf) / (6 * No)))
                 opt_pts.append((No, Lo))
+            else:
+                # Loss still falling at the widest width: the optimum is beyond the sampled
+                # range. Fitting a parabola here invents a spurious upturn and vertex, so we
+                # draw only a guide through the points and flag the descent. N_opt is a lower
+                # bound (>= the widest N), carried to panel B as a right-arrow marker.
+                axA.plot(N / 1e6, L, "-", color=col, lw=1.3, alpha=.55, zorder=3)
+                axA.annotate("still falling →", (N[-1] / 1e6, L[-1]), color=col, fontsize=8.5,
+                             xytext=(6, 8), textcoords="offset points", ha="left", va="bottom")
+                edge_bounds.append((float(cf), N[-1]))
 
     # The compute-optimal trajectory: the path the sweet spot traces as compute grows.
     # This is the scaling law projected onto (N, loss). Dashed beyond the measured
@@ -112,6 +123,11 @@ def main() -> None:
         )
         axB.annotate(note, (0.5, 0.03), xycoords="axes fraction", ha="center",
                      fontsize=8.5, color="#888", style="italic")
+    # Tiers still descending: plot N_opt as a lower bound (open right-arrow) at the widest
+    # sampled N, so the panel reflects every finished tier without faking a frontier point.
+    for i, (cf, Nlb) in enumerate(edge_bounds):
+        axB.plot(cf, Nlb / 1e6, marker=">", ms=12, color=TIER_COL.get(f"{cf:.0e}", "#333"),
+                 mfc="none", mew=1.8, zorder=5, label="N_opt ≥ (still descending)" if i == 0 else None)
     axB.set_xscale("log")
     axB.set_xlabel("compute  C  (FLOPs)")
     axB.set_ylabel("N_opt (M params)  /  D_opt (B tokens)")
