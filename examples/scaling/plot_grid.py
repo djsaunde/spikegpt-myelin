@@ -87,15 +87,17 @@ def main() -> None:
         icM = ic + sl * math.log(1e6)
         eq = f"L = {icM:.2f} − {abs(sl):.2f}·ln(N/1M)"
         axA.plot(meas / 1e6, sl * np.log(meas) + ic, "-", color="#666", lw=1.8, zorder=3,
-                 label=f"compute-optimal path ({len(op)} tiers)\n{eq}")
+                 label=f"compute-optimal path ({len(op)} tiers)")
         axA.plot(pred / 1e6, sl * np.log(pred) + ic, ":", color="#666", lw=1.8, zorder=3,
-                 label="→ preliminary extrapolation")
+                 label="extrapolation")
+        # equation as a caption, not a legend line (keeps the legend short)
+        axA.text(0.035, 0.05, eq, transform=axA.transAxes, fontsize=8.5, color="#666")
     axA.set_ylim(3.15, 4.0)
     axA.set_xscale("log")
     axA.set_xlabel("model size  N  (total params incl. embedding, M)")
     axA.set_ylabel("final val loss  (nats/token)")
-    axA.set_title("A · isoFLOP parabolas — sweet spot per compute budget", fontsize=11, loc="left")
-    axA.legend(frameon=False, fontsize=9, title="FLOP tier  (★ = optimum)")
+    axA.set_title("A · isoFLOP parabolas", fontsize=11, loc="left")
+    axA.legend(frameon=False, fontsize=8, title="FLOP tier  (★=optimum)", loc="upper right")
     axA.grid(alpha=.25, which="both")
     axA.xaxis.set_minor_locator(NullLocator())
     axA.xaxis.set_major_locator(FixedLocator([58, 92, 139, 215, 376, 640]))
@@ -113,7 +115,7 @@ def main() -> None:
                  "-", color="#333", lw=2, label=f"N_opt ∝ C^{aN:.2f}")
         axB.plot(C, No / 1e6, "o", ms=11, color="#333", mec="white", mew=1.4, zorder=4)
         axB.plot(cx, np.exp(np.polyval(np.polyfit(np.log(C), np.log(Do), 1), np.log(cx))) / 1e9,
-                 "--", color="#B0447A", lw=2, label=f"D_opt ∝ C^{aD:.2f}  (÷10³, B tok)")
+                 "--", color="#B0447A", lw=2, label=f"D_opt ∝ C^{aD:.2f}  (B tok)")
         axB.plot(C, Do / 1e9, "s", ms=10, color="#B0447A", mec="white", mew=1.4, zorder=4)
         axB.set_yscale("log")
         note = (
@@ -131,7 +133,7 @@ def main() -> None:
     axB.set_xscale("log")
     axB.set_xlabel("compute  C  (FLOPs)")
     axB.set_ylabel("N_opt (M params)  /  D_opt (B tokens)")
-    axB.set_title("B · compute-optimal frontier — the scaling exponents", fontsize=11, loc="left")
+    axB.set_title("B · compute-optimal frontier", fontsize=11, loc="left")
     axB.legend(frameon=False, fontsize=10, loc="upper left")
     axB.grid(alpha=.25, which="both")
 
@@ -152,8 +154,8 @@ def main() -> None:
     axC.set_xscale("log")
     axC.set_xlabel("model size  N  (total params incl. embedding, M)")
     axC.set_ylabel("spike rate  (fraction firing)")
-    axC.set_title("C · internal sparsity vs scale (novel)", fontsize=11, loc="left")
-    axC.legend(frameon=False, fontsize=9, loc="center left")
+    axC.set_title("C · internal sparsity vs scale", fontsize=11, loc="left")
+    axC.legend(frameon=False, fontsize=8, loc="lower left")
     axC.grid(alpha=.25, which="both")
     axC.set_ylim(0.15, 0.55)
     axC.xaxis.set_minor_locator(NullLocator())
