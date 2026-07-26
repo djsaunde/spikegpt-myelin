@@ -92,7 +92,7 @@ def main() -> None:
                  label="extrapolation")
         # equation as a caption, not a legend line (keeps the legend short)
         axA.text(0.035, 0.05, eq, transform=axA.transAxes, fontsize=8.5, color="#666")
-    axA.set_ylim(3.15, 4.0)
+    axA.set_ylim(3.0, 4.0)  # floor below c1e19's lowest (d1280=3.05) so the 4th tier isn't clipped
     axA.set_xscale("log")
     axA.set_xlabel("model size  N  (total params incl. embedding, M)")
     axA.set_ylabel("final val loss  (nats/token)")
