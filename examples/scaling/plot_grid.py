@@ -125,11 +125,16 @@ def main() -> None:
         )
         axB.annotate(note, (0.5, 0.03), xycoords="axes fraction", ha="center",
                      fontsize=8.5, color="#888", style="italic")
-    # Tiers still descending: plot N_opt as a lower bound (open right-arrow) at the widest
-    # sampled N, so the panel reflects every finished tier without faking a frontier point.
+    # Tiers still descending: reflect the bound on BOTH series. At fixed C = 6ND, a lower
+    # bound on N_opt (>= widest sampled N) is equivalently an UPPER bound on D_opt
+    # (<= C / 6N_lb). Draw N_opt as an open right-arrow and D_opt as an open down-arrow,
+    # so the panel reflects every finished tier without faking a frontier point.
     for i, (cf, Nlb) in enumerate(edge_bounds):
-        axB.plot(cf, Nlb / 1e6, marker=">", ms=12, color=TIER_COL.get(f"{cf:.0e}", "#333"),
-                 mfc="none", mew=1.8, zorder=5, label="N_opt ≥ (still descending)" if i == 0 else None)
+        col = TIER_COL.get(f"{cf:.0e}", "#333")
+        axB.plot(cf, Nlb / 1e6, marker=">", ms=12, color=col, mfc="none", mew=1.8, zorder=5,
+                 label="N_opt ≥ (still descending)" if i == 0 else None)
+        axB.plot(cf, cf / (6 * Nlb) / 1e9, marker="v", ms=11, color=col, mfc="none", mew=1.8,
+                 zorder=5, label="D_opt ≤ (still descending)" if i == 0 else None)
     axB.set_xscale("log")
     axB.set_xlabel("compute  C  (FLOPs)")
     axB.set_ylabel("N_opt (M params)  /  D_opt (B tokens)")
