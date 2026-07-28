@@ -36,6 +36,11 @@ def main() -> None:
     for r in rows:
         tiers[f"{r['C']:.0e}"].append(r)
 
+    # x-axis ticks = every sampled width's total-param count (M), derived from the data
+    # so a newly added width always gets a tick without editing a hardcoded list.
+    xticks_m = sorted({round(r["N"] / 1e6) for r in rows})
+    xtick_labels = [str(t) for t in xticks_m]
+
     fig, (axA, axB, axC) = plt.subplots(1, 3, figsize=(15.5, 5.0))
     frontier = []  # (C, N_opt, D_opt)
     opt_pts = []  # (N_opt, loss at the optimum) — traces the compute-optimal trajectory
@@ -100,8 +105,8 @@ def main() -> None:
     axA.legend(frameon=False, fontsize=8, title="FLOP tier  (★=optimum)", loc="upper right")
     axA.grid(alpha=.25, which="both")
     axA.xaxis.set_minor_locator(NullLocator())
-    axA.xaxis.set_major_locator(FixedLocator([58, 92, 139, 215, 376, 640]))
-    axA.xaxis.set_major_formatter(FixedFormatter(["58", "92", "139", "215", "376", "640"]))
+    axA.xaxis.set_major_locator(FixedLocator(xticks_m))
+    axA.xaxis.set_major_formatter(FixedFormatter(xtick_labels))
 
     # ---- B: compute-optimal frontier ----
     if len(frontier) >= 2:
@@ -164,8 +169,8 @@ def main() -> None:
     axC.grid(alpha=.25, which="both")
     axC.set_ylim(0.15, 0.55)
     axC.xaxis.set_minor_locator(NullLocator())
-    axC.xaxis.set_major_locator(FixedLocator([58, 92, 139, 215, 376, 640]))
-    axC.xaxis.set_major_formatter(FixedFormatter(["58", "92", "139", "215", "376", "640"]))
+    axC.xaxis.set_major_locator(FixedLocator(xticks_m))
+    axC.xaxis.set_major_formatter(FixedFormatter(xtick_labels))
 
     fig.suptitle(f"SpikeGPT scaling grid — {len(rows)} runs, {len(tiers)} FLOP tiers",
                  fontsize=13.5, y=1.01)
