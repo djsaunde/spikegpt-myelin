@@ -157,6 +157,16 @@
       "tier_flops": 1e+19,
       "grad_accum": 4,
       "activation_checkpointing": false
+    },
+    {
+      "name": "c1e19_1536d",
+      "layers": 29,
+      "embedding": 1536,
+      "tokens": 1724100000,
+      "lr": 0.00010823,
+      "tier_flops": 1e+19,
+      "grad_accum": 16,
+      "activation_checkpointing": false
     }
   ]
 }

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 from typing import Literal
@@ -143,6 +144,8 @@ def _run_spikegpt(
         compile_policy,
         "--matmul-precision",
         "high",
+        "--amp",  # match the grid explicitly (also the trainer default)
+        "bf16",
     ]
     # Data source: a BPE .bin (tokenized from a streaming HF dataset) or the
     # byte-level tiny-shakespeare fallback.
@@ -179,6 +182,8 @@ def _run_spikegpt(
         str(steps),
         "--lr",
         str(lr),
+        "--lr-schedule",  # match the grid (cosine to lr_final); also the default
+        "cosine",
         "--warmup-steps",
         str(warmup_steps),
         "--dropout",
@@ -187,12 +192,18 @@ def _run_spikegpt(
         str(weight_decay),
         "--grad-clip",
         str(grad_clip),
+        "--seed",  # match the grid's fixed seed for reproducibility
+        "0",
         "--log-every",
         str(log_every),
         "--eval-every",
         str(eval_every),
-        "--eval-batches",
-        str(eval_batches),
+        # Grid eval spec: strided over a 2M-token cap of the val holdout — NOT the
+        # legacy --eval-batches, so val/loss is exactly comparable to the 5090 runs.
+        "--val-eval",
+        "strided",
+        "--val-eval-tokens",
+        "2000000",
         "--sample-tokens",
         "16",
     ]
@@ -204,7 +215,11 @@ def _run_spikegpt(
         command.extend(["--wandb", "--wandb-project", wandb_project])
         if wandb_run_name is not None:
             command.extend(["--wandb-run-name", wandb_run_name])
-    subprocess.run(command, cwd=REMOTE_ROOT, check=True)
+    # Pin the W&B entity so the run lands in pitheta/<project> (our shared workspace),
+    # not the API key's default personal entity. WANDB_API_KEY comes from the
+    # wandb-secret attached to the run function.
+    env = {**os.environ, "WANDB_ENTITY": "pitheta"}
+    subprocess.run(command, cwd=REMOTE_ROOT, check=True, env=env)
 
 
 @app.function(cpu=16, memory=32 * 1024, timeout=24 * 60 * 60, volumes={CORPUS_DIR: corpora})
@@ -222,7 +237,12 @@ def prepare_corpus(
     return str(_prepare_bpe_corpus(dataset, hf_config, max_tokens))
 
 
-@app.function(gpu=GPU, timeout=24 * 60 * 60, volumes={CORPUS_DIR: corpora})
+@app.function(
+    gpu=GPU,
+    timeout=24 * 60 * 60,
+    volumes={CORPUS_DIR: corpora},
+    secrets=[modal.Secret.from_name("wandb-secret")],  # WANDB_API_KEY for logging
+)
 def run_h100(
     *,
     dataset: str = "fineweb-edu",
