@@ -26,7 +26,7 @@ import torch
 from spikegpt import MemmapTokenCorpus, load_spike_language_checkpoint, sample_token_batch
 
 # Horowitz 45nm, 32-bit (the figures the SpikeGPT paper used), picojoules
-E_MAC = 4.6
+E_MAC = 4.5  # SpikeGPT paper value (Horowitz 2014); was 4.6
 E_AC = 0.9
 
 
