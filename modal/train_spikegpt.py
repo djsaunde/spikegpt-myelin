@@ -134,6 +134,9 @@ def _run_spikegpt(
     wandb: bool,
     wandb_project: str,
     wandb_run_name: str | None,
+    seed: int = 0,
+    spiking: bool = True,
+    checkpoint: bool = False,
 ) -> None:
     command = [
         VENV_PY,
@@ -192,8 +195,8 @@ def _run_spikegpt(
         str(weight_decay),
         "--grad-clip",
         str(grad_clip),
-        "--seed",  # match the grid's fixed seed for reproducibility
-        "0",
+        "--seed",
+        str(seed),
         "--log-every",
         str(log_every),
         "--eval-every",
@@ -209,6 +212,13 @@ def _run_spikegpt(
     ]
     if lr_final is not None:
         command += ["--lr-final", str(lr_final)]
+    if not spiking:  # non-spiking (continuous RWKV) baseline arm
+        command.append("--no-spiking")
+    if checkpoint and wandb_run_name:
+        ckdir = f"{CORPUS_DIR}/ckpt"
+        command += ["--checkpoint-out", f"{ckdir}/{wandb_run_name}.ckpt",
+                    "--checkpoint-every", "5000",
+                    "--best-checkpoint-out", f"{ckdir}/{wandb_run_name}.best.pt"]
     if activation_checkpointing:
         command.append("--activation-checkpointing")
     if wandb:
@@ -220,6 +230,8 @@ def _run_spikegpt(
     # wandb-secret attached to the run function.
     env = {**os.environ, "WANDB_ENTITY": "pitheta"}
     subprocess.run(command, cwd=REMOTE_ROOT, check=True, env=env)
+    if checkpoint:
+        corpora.commit()  # persist checkpoints written to the mounted volume
 
 
 @app.function(cpu=16, memory=32 * 1024, timeout=24 * 60 * 60, volumes={CORPUS_DIR: corpora})
@@ -269,6 +281,9 @@ def run_h100(
     wandb: bool = False,
     wandb_project: str = "myelin",
     wandb_run_name: str | None = None,
+    seed: int = 0,
+    spiking: bool = True,
+    checkpoint: bool = False,
 ) -> None:
     """Run a single-GPU SpikeGPT training job on H100."""
 
@@ -297,6 +312,9 @@ def run_h100(
         wandb=wandb,
         wandb_project=wandb_project,
         wandb_run_name=wandb_run_name or (f"modal-spikegpt-{dataset}" if wandb else None),
+        seed=seed,
+        spiking=spiking,
+        checkpoint=checkpoint,
     )
 
 
@@ -327,6 +345,9 @@ def main(
     wandb: bool = False,
     wandb_project: str = "myelin",
     wandb_run_name: str | None = None,
+    seed: int = 0,
+    spiking: bool = True,
+    checkpoint: bool = False,
 ) -> None:
     """Launch a single-GPU Modal SpikeGPT training job.
 
@@ -361,6 +382,9 @@ def main(
         "wandb": wandb,
         "wandb_project": wandb_project,
         "wandb_run_name": wandb_run_name,
+        "seed": seed,
+        "spiking": spiking,
+        "checkpoint": checkpoint,
     }
     if target == "h100":
         run_h100.remote(**kwargs)
