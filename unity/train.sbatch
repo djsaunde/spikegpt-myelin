@@ -98,7 +98,7 @@ fi
 RESUME=(); [ -f "$CKPT" ] && RESUME=(--checkpoint-in "$CKPT")
 echo "--- training $REMAINING steps${RESUME:+ (resuming from $CKPT)} ---"
 # shellcheck disable=SC2086
-uv run --extra cuda --extra tracking python examples/train_tiny_spikegpt.py \
+uv run --extra cuda --extra tracking --extra tokenization python examples/train_tiny_spikegpt.py \
   --device cuda --compile regional --compile-mode max-autotune --matmul-precision high --amp bf16 \
   --train-bin "$CORPUS" --vocab bpe \
   --val-holdout-tokens "$VAL_HOLDOUT" --val-eval strided --val-eval-tokens 2000000 \

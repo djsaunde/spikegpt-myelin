@@ -43,21 +43,21 @@ if [ -n "${GIT_TOKEN:-}" ]; then
 fi
 
 # --- 4. sync the locked env ---------------------------------------------------
-echo; echo "--- uv sync (--extra cuda --extra tracking) ---"
+echo; echo "--- uv sync (--extra cuda --extra tracking --extra tokenization) ---"
 # --frozen: install exactly uv.lock; do NOT re-resolve (keeps the 5090-validated pins).
-if ! uv sync --frozen --extra cuda --extra tracking; then
+if ! uv sync --frozen --extra cuda --extra tracking --extra tokenization; then
   echo
   echo "!! cu130 sync failed. Most likely the Unity driver is < the cu130 minimum."
   echo "   Fallback: retry against an older CUDA nightly by editing pyproject's"
   echo "   [[tool.uv.index]] url to .../nightly/cu128 (or cu126) and re-running"
-  echo "   'uv sync --extra cuda --extra tracking' (drops --frozen so it re-resolves)."
+  echo "   'uv sync --extra cuda --extra tracking --extra tokenization' (drops --frozen so it re-resolves)."
   echo "   Check the required driver against 'nvidia-smi' output above."
   exit 1
 fi
 
 # --- 5. diagnostic: does torch actually see the GPU? --------------------------
 echo; echo "--- torch / GPU diagnostic ---"
-uv run --extra cuda --extra tracking python - <<'PY'
+uv run --extra cuda --extra tracking --extra tokenization python - <<'PY'
 import torch
 print("torch:", torch.__version__)
 print("cuda available:", torch.cuda.is_available())

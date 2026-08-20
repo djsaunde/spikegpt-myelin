@@ -50,7 +50,7 @@ fi
 # batch 8 (not 16) keeps it well under memory on any GPU tier; this is a plumbing
 # check, not a throughput benchmark. Watch the per-step time in the log.
 echo "--- training 200 steps (d512 L12, bf16, compile regional) ---"
-uv run --extra cuda --extra tracking python examples/train_tiny_spikegpt.py \
+uv run --extra cuda --extra tracking --extra tokenization python examples/train_tiny_spikegpt.py \
   --device cuda --compile regional --compile-mode default --matmul-precision high --amp bf16 \
   --train-bin "$SMOKE_BIN" --vocab bpe \
   --val-holdout-tokens 1000000 --val-eval strided --val-eval-tokens 500000 \
