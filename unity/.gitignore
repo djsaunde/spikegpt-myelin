@@ -1,0 +1,5 @@
+# runtime artifacts (created by the sbatch scripts)
+logs/
+ckpt/
+smoke_corpus.bin
+smoke_corpus.json
