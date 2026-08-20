@@ -36,6 +36,11 @@ mkdir -p unity/logs unity/ckpt
 export PATH="$HOME/.local/bin:$PATH"
 export WANDB_ENTITY="${WANDB_ENTITY:-pitheta}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+# Persist the torch.compile/inductor cache on /work so the (multi-hour at 2.4B)
+# compile is paid ONCE and any resume reuses it instead of recompiling.
+export TORCHINDUCTOR_CACHE_DIR="${TORCHINDUCTOR_CACHE_DIR:-/work/pi_mhajiesmaili_umass_edu/csigrist_spikegpt/inductor_cache}"
+export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-/work/pi_mhajiesmaili_umass_edu/csigrist_spikegpt/triton_cache}"
+mkdir -p "$TORCHINDUCTOR_CACHE_DIR" "$TRITON_CACHE_DIR"
 
 # ---- hero config (override via env) ------------------------------------------
 RUN_NAME="${RUN_NAME:-hero_1p6b}"
@@ -48,6 +53,8 @@ BATCH="${BATCH:-16}"
 GRAD_ACCUM="${GRAD_ACCUM:-1}"     # raise if the batch OOMs on the chosen GPU
 CTX="${CTX:-1024}"
 WARMUP="${WARMUP:-2000}"
+COMPILE="${COMPILE:-regional}"        # regional is known-good at 2.4B; 'none' = eager fallback
+COMPILE_MODE="${COMPILE_MODE:-default}"  # 'default' avoids max-autotune's very long compile at this size
 CKPT_EVERY="${CKPT_EVERY:-2000}"
 # corpus + checkpoints live on /work (1.1 PB), NOT $HOME (100 GB) -- the corpus is ~50 GB.
 WORK="${WORK:-/work/pi_mhajiesmaili_umass_edu/csigrist_spikegpt}"
@@ -99,7 +106,7 @@ RESUME=(); [ -f "$CKPT" ] && RESUME=(--checkpoint-in "$CKPT")
 echo "--- training $REMAINING steps${RESUME:+ (resuming from $CKPT)} ---"
 # shellcheck disable=SC2086
 uv run --extra cuda --extra tracking --extra tokenization python examples/train_tiny_spikegpt.py \
-  --device cuda --compile regional --compile-mode max-autotune --matmul-precision high --amp bf16 \
+  --device cuda --compile "$COMPILE" --compile-mode "$COMPILE_MODE" --matmul-precision high --amp bf16 \
   --train-bin "$CORPUS" --vocab bpe \
   --val-holdout-tokens "$VAL_HOLDOUT" --val-eval strided --val-eval-tokens 2000000 \
   --context-length "$CTX" --layers "$LAYERS" --embedding "$EMBED" --model-type rwkv \
