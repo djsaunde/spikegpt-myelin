@@ -88,6 +88,7 @@ PY
 DONE="$(done_steps)"
 echo "previous_steps=$DONE / target=$TARGET_STEPS"
 if [ "$DONE" -ge "$TARGET_STEPS" ]; then
+  touch "$WORK/${RUN_NAME}.DONE"   # completion marker (the watchdog stops resubmitting once present)
   echo "target already reached -- nothing to do. Done."; exit 0
 fi
 REMAINING=$((TARGET_STEPS - DONE))
@@ -95,10 +96,12 @@ REMAINING=$((TARGET_STEPS - DONE))
 # ---- submit successor FIRST (survives a hard kill of this job) ----------------
 # afterany: run the successor whether we finish, hit walltime, or crash. The
 # successor re-checks done_steps and no-ops if we happened to reach target.
+# Target BOTH gpu (stable) and gpu-preempt so a resume can land on a non-preempt
+# node and stop the preemption churn, instead of re-queuing on preempt only.
 if command -v sbatch >/dev/null 2>&1; then
   NEXT=$(sbatch --parsable --dependency=afterany:${SLURM_JOB_ID} \
-           --job-name="${SLURM_JOB_NAME}" --partition="${SLURM_JOB_PARTITION}" \
-           --export=ALL unity/train.sbatch || true)
+           --job-name="${SLURM_JOB_NAME}" --partition=gpu,gpu-preempt \
+           --gres=gpu:h100:1 --export=ALL unity/train.sbatch || true)
   [ -n "${NEXT:-}" ] && echo "queued successor job $NEXT (afterany:${SLURM_JOB_ID})"
 fi
 
