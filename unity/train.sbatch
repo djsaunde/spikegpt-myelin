@@ -98,11 +98,19 @@ REMAINING=$((TARGET_STEPS - DONE))
 # successor re-checks done_steps and no-ops if we happened to reach target.
 # Target BOTH gpu (stable) and gpu-preempt so a resume can land on a non-preempt
 # node and stop the preemption churn, instead of re-queuing on preempt only.
-if command -v sbatch >/dev/null 2>&1; then
+#
+# CRITICAL: submit ONLY on the job's first run. On gpu-preempt, preemption REQUEUES
+# this same job id (it restarts from the top and resumes from checkpoint), which would
+# re-run this block and spawn a DUPLICATE successor every requeue -- when the job finally
+# ends, all of them fire and resume the same checkpoint concurrently => corruption.
+# SLURM_RESTART_COUNT is 0 on the first run and >=1 after each requeue.
+if command -v sbatch >/dev/null 2>&1 && [ "${SLURM_RESTART_COUNT:-0}" -eq 0 ]; then
   NEXT=$(sbatch --parsable --dependency=afterany:${SLURM_JOB_ID} \
            --job-name="${SLURM_JOB_NAME}" --partition=gpu,gpu-preempt \
            --gres=gpu:h100:1 --export=ALL unity/train.sbatch || true)
   [ -n "${NEXT:-}" ] && echo "queued successor job $NEXT (afterany:${SLURM_JOB_ID})"
+else
+  echo "requeue restart (SLURM_RESTART_COUNT=${SLURM_RESTART_COUNT:-0}) -- reusing existing successor, not duplicating"
 fi
 
 RESUME=(); [ -f "$CKPT" ] && RESUME=(--checkpoint-in "$CKPT")
